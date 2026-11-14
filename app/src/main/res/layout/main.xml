@@ -1,0 +1,436 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0F1115">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <!-- Header Bar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="10dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="S60Reborn"
+                android:textColor="#00E676"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvActiveFile"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/card_dark"
+                android:paddingLeft="10dp"
+                android:paddingRight="10dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="Belum ada paket"
+                android:textColor="#90A4AE"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- Scrollable Form Editor Modern -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1.8"
+            android:scrollbars="none"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- Card 1: Informasi Paket -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/card_dark"
+                    android:padding="12dp"
+                    android:layout_marginBottom="10dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="INFORMASI APLIKASI"
+                        android:textColor="#00E676"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="8dp" />
+
+                    <!-- Nama Aplikasi -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Nama Aplikasi"
+                        android:textColor="#B0BEC5"
+                        android:textSize="11sp"
+                        android:layout_marginBottom="3dp" />
+
+                    <EditText
+                        android:id="@+id/etAppName"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:background="@drawable/input_modern"
+                        android:hint="Contoh: Music Player"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#546E7A"
+                        android:textSize="13sp"
+                        android:paddingLeft="10dp"
+                        android:paddingRight="10dp"
+                        android:singleLine="true"
+                        android:layout_marginBottom="8dp" />
+
+                    <!-- Author / Vendor -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Author / Pembuat"
+                        android:textColor="#B0BEC5"
+                        android:textSize="11sp"
+                        android:layout_marginBottom="3dp" />
+
+                    <EditText
+                        android:id="@+id/etVendorName"
+                        android:layout_width="match_parent"
+                        android:layout_height="40dp"
+                        android:background="@drawable/input_modern"
+                        android:hint="Contoh: Nokia / Modder"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#546E7A"
+                        android:textSize="13sp"
+                        android:paddingLeft="10dp"
+                        android:paddingRight="10dp"
+                        android:singleLine="true"
+                        android:layout_marginBottom="8dp" />
+
+                    <!-- Baris Version & UID3 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <!-- Version (Major.Minor.Build) -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1.2"
+                            android:orientation="vertical"
+                            android:layout_marginRight="8dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Versi (Maj . Min . Bld)"
+                                android:textColor="#B0BEC5"
+                                android:textSize="11sp"
+                                android:layout_marginBottom="3dp" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal">
+
+                                <EditText
+                                    android:id="@+id/etVerMajor"
+                                    android:layout_width="0dp"
+                                    android:layout_height="38dp"
+                                    android:layout_weight="1"
+                                    android:background="@drawable/input_modern"
+                                    android:gravity="center"
+                                    android:inputType="number"
+                                    android:text="1"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="13sp" />
+
+                                <EditText
+                                    android:id="@+id/etVerMinor"
+                                    android:layout_width="0dp"
+                                    android:layout_height="38dp"
+                                    android:layout_weight="1"
+                                    android:layout_marginLeft="4dp"
+                                    android:background="@drawable/input_modern"
+                                    android:gravity="center"
+                                    android:inputType="number"
+                                    android:text="0"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="13sp" />
+
+                                <EditText
+                                    android:id="@+id/etVerBuild"
+                                    android:layout_width="0dp"
+                                    android:layout_height="38dp"
+                                    android:layout_weight="1"
+                                    android:layout_marginLeft="4dp"
+                                    android:background="@drawable/input_modern"
+                                    android:gravity="center"
+                                    android:inputType="number"
+                                    android:text="0"
+                                    android:textColor="#FFFFFF"
+                                    android:textSize="13sp" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                        <!-- UID3 -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="UID3 Aplikasi"
+                                android:textColor="#B0BEC5"
+                                android:textSize="11sp"
+                                android:layout_marginBottom="3dp" />
+
+                            <EditText
+                                android:id="@+id/etUid3"
+                                android:layout_width="match_parent"
+                                android:layout_height="38dp"
+                                android:background="@drawable/input_modern"
+                                android:gravity="center"
+                                android:text="0x20001234"
+                                android:textColor="#4FC3F7"
+                                android:textSize="12sp"
+                                android:typeface="monospace"
+                                android:singleLine="true" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Card 2: Pesan Notif saat Install -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/card_dark"
+                    android:padding="12dp"
+                    android:layout_marginBottom="10dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="PESAN NOTIF SAAT INSTALL (OPSIONAL)"
+                        android:textColor="#FFB74D"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:layout_marginBottom="4dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Teks ini akan muncul sebagai pop-up saat paket di-install di Symbian:"
+                        android:textColor="#78909C"
+                        android:textSize="11sp"
+                        android:layout_marginBottom="6dp" />
+
+                    <EditText
+                        android:id="@+id/etInstallNote"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="@drawable/input_modern"
+                        android:gravity="top|left"
+                        android:hint="Contoh: Modded by Uce - Selamat menikmati aplikasi ini!"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#546E7A"
+                        android:textSize="12sp"
+                        android:padding="8dp" />
+                </LinearLayout>
+
+                <!-- Card 3: Daftar Isi File dalam Paket -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/card_dark"
+                    android:padding="12dp"
+                    android:layout_marginBottom="60dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="8dp">
+
+                        <TextView
+                            android:id="@+id/tvFileListHeader"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="ISI FILE PAKET (0)"
+                            android:textColor="#4FC3F7"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+
+                        <Button
+                            android:id="@+id/btnAddFile"
+                            android:layout_width="wrap_content"
+                            android:layout_height="32dp"
+                            android:background="@drawable/fab_mini_bg"
+                            android:text="  + Tambah File  "
+                            android:textColor="#00E676"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <!-- Container dinamis item file -->
+                    <LinearLayout
+                        android:id="@+id/llFileItemsContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Belum ada file. Pilih paket .sis/.sisx atau klik + Tambah File."
+                            android:textColor="#546E7A"
+                            android:textSize="12sp"
+                            android:paddingTop="8dp"
+                            android:paddingBottom="8dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- Console Log Ringkas di Bawah -->
+        <ScrollView
+            android:id="@+id/svLog"
+            android:layout_width="match_parent"
+            android:layout_height="85dp"
+            android:background="#090B0E"
+            android:padding="8dp">
+
+            <TextView
+                android:id="@+id/tvLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="S60Reborn siap. Klik tombol + di kanan bawah untuk memilih file.\n"
+                android:textColor="#00E676"
+                android:textSize="10sp"
+                android:typeface="monospace" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- Backdrop Gelap saat FAB Terbuka -->
+    <View
+        android:id="@+id/fabBackdrop"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#AA000000"
+        android:visibility="gone" />
+
+    <!-- FAB Speed-Dial Pojok Kanan Bawah -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|right"
+        android:orientation="vertical"
+        android:gravity="right"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:id="@+id/fabMenuContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="right"
+            android:visibility="gone"
+            android:layout_marginBottom="10dp">
+
+            <Button
+                android:id="@+id/btnBrowse"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/fab_mini_bg"
+                android:text="  📂  Buka File .SIS / .SISX  "
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnUnpack"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/fab_mini_bg"
+                android:text="  📦  1. Unpack Paket  "
+                android:textColor="#4FC3F7"
+                android:textStyle="bold"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnRepack"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/fab_mini_bg"
+                android:text="  🛠️  2. Build / Repack (.SIS)  "
+                android:textColor="#81C784"
+                android:textStyle="bold"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnSign"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/fab_mini_bg"
+                android:text="  ✍️  3. Self-Sign (.SISX)  "
+                android:textColor="#FFB74D"
+                android:textStyle="bold"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnSettings"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/fab_mini_bg"
+                android:text="  ⚙️  Settings  "
+                android:textColor="#CFD8DC"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnAbout"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:background="@drawable/fab_mini_bg"
+                android:text="  ℹ️  About S60Reborn  "
+                android:textColor="#80CBC4"
+                android:textSize="12sp" />
+			
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/fabMain"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:background="@drawable/fab_circle"
+            android:text="+"
+            android:textColor="#121417"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:elevation="8dp" />
+    </LinearLayout>
+
+</FrameLayout>
+
