@@ -303,13 +303,24 @@ public class SisxCoreParser {
             }
         }
 
-        info.files = allEntries;
+		info.files = allEntries;
 
         if (writeToDisk && outputDir != null) {
             generatePkgScript(info, new File(outputDir, "project.pkg"));
+
+            // TAMBAHKAN INI: Rekam struktur TLV Controller (termasuk SISIf/ElseIf) ke header_offset.txt
+            if (!decompressedBlobs.isEmpty()) {
+                SisManifestManager.recordAndSaveFromController(
+					new File(outputDir, "header_offset.txt"),
+					info,
+					decompressedBlobs.get(0)
+                );
+            }
         }
 
         return info;
+		
+
     }
 	
 	private static boolean containsSymbianPathString(byte[] blob) {

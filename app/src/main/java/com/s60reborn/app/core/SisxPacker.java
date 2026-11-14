@@ -59,22 +59,32 @@ public class SisxPacker {
     private static final int FIELD_DATE = 38;       // 0x26
     private static final int FIELD_TIME = 39;       // 0x27
 
-    public static SisPackageInfo packFromPkg(File pkgFile, File outputSisFile) throws Exception {
+	public static SisPackageInfo packFromPkg(File pkgFile, File outputSisFile) throws Exception {
         File projectDir = pkgFile.getParentFile();
         SisPackageInfo info = parsePkgFile(pkgFile, projectDir);
 
-        for (String subPath : info.embeddedSisPaths) {
-            File subFile = new File(projectDir, subPath);
-            if (subFile.exists()) {
-                SisPackageInfo subInfo = SisxCoreParser.inspectSisx(subFile);
-                for (SisFileEntry subEntry : subInfo.files) {
-                    if (subEntry.rawData != null && subEntry.rawData.length > 0
-						&& !subEntry.targetPath.startsWith("[Run During Install]")) {
-                        info.files.add(subEntry);
-                    }
-                }
-            }
+        // TAMBAHKAN BLOK INI: Gunakan blueprint header_offset.txt jika tersedia
+        File manifestFile = new File(projectDir, "header_offset.txt");
+        if (manifestFile.exists()) {
+            SisManifestManager.ProjectManifest manifest = SisManifestManager.loadManifest(manifestFile);
+
+            // Sinkronkan perubahan metadata (Nama, Author, Versi, UID3) dari UI / project.pkg
+            manifest.uid3 = info.uid3;
+            manifest.appName = info.appName;
+            manifest.vendorName = info.vendorName;
+            manifest.majorVersion = info.majorVersion;
+            manifest.minorVersion = info.minorVersion;
+            manifest.buildVersion = info.buildVersion;
+
+            // Sinkronkan daftar file jika user menambah/menghapus file di UI
+            syncManifestFilesWithPkg(manifest, info.files);
+            SisManifestManager.saveManifest(manifestFile, manifest);
+
+            return SisManifestManager.buildSisxFromManifest(projectDir, manifest, outputSisFile);
         }
+
+        // ... [kode fallback lama Anda tetap di bawah sini] ...
+		
 
         if (info.files.isEmpty()) {
             throw new IOException("0 file terbaca dari project.pkg! Periksa daftar file sebelum Build.");
@@ -94,7 +104,7 @@ public class SisxPacker {
             byte[] digest = sha1.digest(entry.rawData);
             fileHashes.add(digest);
 
-            String hexHash = bytesToHex(digest);
+			String hexHash = bytesToHex(digest);
             if (sha1ToDataIndex.containsKey(hexHash)) {
                 int existingDataIdx = sha1ToDataIndex.get(hexHash);
                 entry.fileIndex = existingDataIdx;
@@ -105,13 +115,16 @@ public class SisxPacker {
                 entry.fileIndex = newDataIdx;
 
                 byte[] comp = deflateBytes(entry.rawData);
-                entry.compressedSize = comp.length;
-                exactCompSizes.add((long) comp.length);
-
-                // FIELD_FILE_DATA (24) membungkus FIELD_COMPRESSED (2)
                 byte[] compField = buildCompressedField(1, entry.uncompressedSize, comp);
+
+                // Panjang terkompresi di SISFileDescription mencakup header FIELD_COMPRESSED
+                long totalCompFieldLen = compField.length;
+                entry.compressedSize = totalCompFieldLen;
+                exactCompSizes.add(totalCompFieldLen);
+
                 compressedBlocks.add(compField);
             }
+			
         }
 
 		// 1. Controller: Langsung rangkai Tag 34 + Tag 2 + Compressed Data (TANPA panjang tengah)
@@ -171,6 +184,71 @@ public class SisxPacker {
 
         return info;
     }
+	
+	private static void syncManifestFilesWithPkg(
+		SisManifestManager.ProjectManifest manifest, List<SisFileEntry> pkgFiles) {
+
+        int mainInstallBlockId = -1;
+        int maxNodeId = 0;
+        for (SisManifestManager.TreeNode n : manifest.allNodes) {
+            if (n.nodeId > maxNodeId) maxNodeId = n.nodeId;
+            if (n.parentId == 0 && n.fieldType == FIELD_INSTALL_BLOCK) {
+                mainInstallBlockId = n.nodeId;
+            }
+        }
+
+        Map<String, SisManifestManager.TreeNode> targetToNode = new HashMap<String, SisManifestManager.TreeNode>();
+        for (SisManifestManager.TreeNode n : manifest.allNodes) {
+            if ("FILE_DESC".equals(n.nodeType)) {
+                for (SisFileEntry oldF : manifest.files) {
+                    if (oldF.fileIndex == n.fileRef && oldF.targetPath != null) {
+                        targetToNode.put(oldF.targetPath.toLowerCase(), n);
+                    }
+                }
+            }
+        }
+
+        java.util.Set<Integer> keptFileIndices = new java.util.HashSet<Integer>();
+        int maxIdx = -1;
+        for (SisFileEntry f : manifest.files) {
+            if (f.fileIndex > maxIdx) maxIdx = f.fileIndex;
+        }
+
+        List<SisFileEntry> syncedList = new ArrayList<SisFileEntry>();
+        for (SisFileEntry pf : pkgFiles) {
+            String key = pf.targetPath.toLowerCase();
+            if (targetToNode.containsKey(key)) {
+                int origIdx = targetToNode.get(key).fileRef;
+                pf.fileIndex = origIdx;
+                keptFileIndices.add(origIdx);
+                syncedList.add(pf);
+            } else {
+                int newIdx = ++maxIdx;
+                pf.fileIndex = newIdx;
+                keptFileIndices.add(newIdx);
+                syncedList.add(pf);
+
+                if (mainInstallBlockId != -1) {
+                    SisManifestManager.TreeNode newNode = new SisManifestManager.TreeNode(
+						++maxNodeId, mainInstallBlockId, FIELD_FILE_DESCRIPTION, "FILE_DESC"
+                    );
+                    newNode.fileRef = newIdx;
+                    manifest.allNodes.add(newNode);
+                }
+            }
+        }
+
+        // Pengganti removeIf untuk Java 7 menggunakan Iterator
+        java.util.Iterator<SisManifestManager.TreeNode> it = manifest.allNodes.iterator();
+        while (it.hasNext()) {
+            SisManifestManager.TreeNode n = it.next();
+            if ("FILE_DESC".equals(n.nodeType) && !keptFileIndices.contains(n.fileRef)) {
+                it.remove();
+            }
+        }
+        manifest.files = syncedList;
+    }
+	
 
     public static SisPackageInfo packLegacyV2FromPkg(File pkgFile, File outputSisFile) throws Exception {
         File projectDir = pkgFile.getParentFile();
@@ -663,43 +741,36 @@ public class SisxPacker {
     }
 
 	private static byte[] buildDataBlockBytes(List<byte[]> wrappedFileDatas) throws IOException {
-        // 1. Susun array data unit & file data
+        // Susun FIELD_ARRAY(33) -> FIELD_FILE_DATA(24) -> isi file
         ByteArrayOutputStream fileDataArr = new ByteArrayOutputStream();
         fileDataArr.write(intToLe(FIELD_FILE_DATA));
         for (byte[] item : wrappedFileDatas) {
-            fileDataArr.write(intToLe(item.length));
-            fileDataArr.write(pad4(item));
+            // Setiap item adalah TLV FIELD_COMPRESSED (tag 2) untuk file fisik tersebut
+            byte[] tlvFileComp = wrapTlv(FIELD_COMPRESSED, item);
+            fileDataArr.write(intToLe(tlvFileComp.length));
+            fileDataArr.write(pad4(tlvFileComp));
         }
         byte[] dataUnitBody = wrapTlv(FIELD_ARRAY, fileDataArr.toByteArray());
 
+        // Susun FIELD_ARRAY(33) -> FIELD_DATA_UNIT(23)
         ByteArrayOutputStream unitArr = new ByteArrayOutputStream();
         unitArr.write(intToLe(FIELD_DATA_UNIT));
         unitArr.write(intToLe(dataUnitBody.length));
         unitArr.write(pad4(dataUnitBody));
 
-        byte[] rawDataBlock = wrapTlv(FIELD_ARRAY, unitArr.toByteArray());
+        // Kembalikan raw array data unit (nanti dikompresi oleh packFromPkg)
+        return wrapTlv(FIELD_ARRAY, unitArr.toByteArray());
+    }
 
-	// 2. Kompresi seluruh block data fisik dengan Zlib
-	byte[] compData = deflateBytes(rawDataBlock);
-
-        // 3. Bungkus dengan FIELD_COMPRESSED (tag 2)
-        byte[] compFieldData = buildCompressedField(1, rawDataBlock.length, compData);
-
-        // 4. Bungkus luar dengan FIELD_DATA (tag 35)
-        return wrapTlv(FIELD_DATA, compFieldData);
-		}
-		
-
-	private static byte[] buildCompressedField(int algorithm, long uncompressedSize, byte[] compressedData) throws IOException {
-        // Langsung tulis format FIELD_COMPRESSED (tag 2) sesuai standar Symbian OS 9.x
+    private static byte[] buildCompressedField(int algorithm, long uncompressedSize, byte[] compressedData) throws IOException {
         ByteArrayOutputStream compHeadBody = new ByteArrayOutputStream();
-        compHeadBody.write(intToLe(algorithm)); // 1 = Zlib
+        compHeadBody.write(intToLe(algorithm)); // 1 = Zlib (Deflate)
         ByteBuffer uSizeBuf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(uncompressedSize);
         compHeadBody.write(uSizeBuf.array());
         compHeadBody.write(compressedData);
-
         return compHeadBody.toByteArray();
     }
+	
 	
 	
 

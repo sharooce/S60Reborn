@@ -69,49 +69,67 @@ public class SisxSigner {
     /**
      * Menyisipkan SISSignatureCertificateChain ke DALAM FIELD_CONTENTS (36) dan memperbarui panjangnya.
      */
-    private static void writeSignedSisx(byte[] sisBytes, X509Certificate cert, PrivateKey privateKey, File signedSisxOut) throws Exception {
+	private static void writeSignedSisx(byte[] sisBytes, X509Certificate cert, PrivateKey privateKey, File signedSisxOut) throws Exception {
         ByteBuffer hdrCheck = ByteBuffer.wrap(sisBytes).order(ByteOrder.LITTLE_ENDIAN);
         int contentsTag = hdrCheck.getInt(16);
         int origContentsLen = hdrCheck.getInt(20);
-        if (contentsTag != FIELD_CONTENTS) {
-            throw new IOException("File .sis tidak valid (bukan SISContents=36).");
+        if (contentsTag != FIELD_CONTENTS || 24 + origContentsLen > sisBytes.length) {
+            throw new IOException("File .sis tidak valid (bukan SISContents=12).");
         }
 
         byte[] origContentsBody = new byte[origContentsLen];
         System.arraycopy(sisBytes, 24, origContentsBody, 0, origContentsLen);
 
-        // Ekstrak raw TLV FIELD_CONTROLLER dari awal origContentsBody untuk ditandatangani
+        // Ekstrak bagian Controller + Data saja (buang signature lama jika file sudah pernah di-sign)
         ByteBuffer bodyBuf = ByteBuffer.wrap(origContentsBody).order(ByteOrder.LITTLE_ENDIAN);
+        int ctrlTag = bodyBuf.getInt(0);
         int ctrlLen = bodyBuf.getInt(4);
         int ctrlPaddedTotal = 8 + ((ctrlLen + 3) & ~3);
 
+        if (ctrlTag != 34 || ctrlPaddedTotal > origContentsLen) {
+            throw new IOException("Header FIELD_CONTROLLER (34) tidak valid di dalam SISContents.");
+        }
+
+        // Ambil hanya FIELD_CONTROLLER + FIELD_DATA (abaikan FIELD_ARRAY signature lama jika ada)
+        int cleanContentsLen = ctrlPaddedTotal;
+        if (ctrlPaddedTotal + 8 <= origContentsLen) {
+            int nextTag = bodyBuf.getInt(ctrlPaddedTotal);
+            int nextLen = bodyBuf.getInt(ctrlPaddedTotal + 4);
+            if (nextTag == 35) { // FIELD_DATA
+                cleanContentsLen = ctrlPaddedTotal + 8 + ((nextLen + 3) & ~3);
+            }
+        }
+        byte[] cleanContentsBody = new byte[cleanContentsLen];
+        System.arraycopy(origContentsBody, 0, cleanContentsBody, 0, cleanContentsLen);
+
+        // Tandatangani isi FIELD_CONTROLLER (mulai offset 8 sepanjang ctrlLen)
         boolean isDsa = (privateKey instanceof DSAPrivateKey) || "DSA".equalsIgnoreCase(privateKey.getAlgorithm());
         String sigAlgName = isDsa ? "SHA1withDSA" : "SHA1withRSA";
         String oidStr = isDsa ? "1.2.840.10040.4.3" : "1.2.840.113549.1.1.5";
 
         Signature signer = Signature.getInstance(sigAlgName);
         signer.initSign(privateKey);
-        signer.update(origContentsBody, 0, ctrlPaddedTotal);
+        signer.update(cleanContentsBody, 8, ctrlLen);
         byte[] signatureBytes = signer.sign();
 
-        // 1. SignatureAlgorithm
+        // 1. SignatureAlgorithm (FIELD_SIGNATURE_ALGORITHM = 29 -> FIELD_STRING = 1)
         byte[] oidBytes = oidStr.getBytes(StandardCharsets.UTF_16LE);
         byte[] tlvAlg = wrapTlv(FIELD_SIGNATURE_ALGORITHM, wrapTlv(1, oidBytes));
 
-        // 2. Signature
+        // 2. Signature (FIELD_SIGNATURE = 28)
         ByteArrayOutputStream sigItem = new ByteArrayOutputStream();
         sigItem.write(tlvAlg);
         sigItem.write(wrapTlv(FIELD_BLOB, signatureBytes));
         byte[] tlvSig = wrapTlv(FIELD_SIGNATURE, sigItem.toByteArray());
 
-        // 3. Array of Signatures
+        // 3. Array of Signatures (FIELD_SIGNATURES = 30)
         ByteArrayOutputStream sigArr = new ByteArrayOutputStream();
         sigArr.write(intToLe(FIELD_SIGNATURE));
         sigArr.write(intToLe(tlvSig.length));
         sigArr.write(pad4(tlvSig));
         byte[] tlvSigArray = wrapTlv(FIELD_SIGNATURES, sigArr.toByteArray());
-		
-        // 4. CertificateChain: FIELD_CERTIFICATE_CHAIN(14) -> FIELD_ARRAY(2) -> FIELD_BLOB(25)
+
+        // 4. CertificateChain (FIELD_CERTIFICATE_CHAIN = 31 -> FIELD_ARRAY = 33 -> FIELD_BLOB = 36)
         byte[] certDer = cert.getEncoded();
         ByteArrayOutputStream certArr = new ByteArrayOutputStream();
         certArr.write(intToLe(FIELD_BLOB));
@@ -119,22 +137,22 @@ public class SisxSigner {
         certArr.write(pad4(certDer));
         byte[] tlvCertChain = wrapTlv(FIELD_CERTIFICATE_CHAIN, wrapTlv(FIELD_ARRAY, certArr.toByteArray()));
 
-        // 5. SISSignatureCertificateChain (34)
+        // 5. SISSignatureCertificateChain (FIELD_SIGNATURE_CERTIFICATE_CHAIN = 27)
         ByteArrayOutputStream chainBody = new ByteArrayOutputStream();
         chainBody.write(tlvSigArray);
         chainBody.write(tlvCertChain);
         byte[] tlvSignedChain = wrapTlv(FIELD_SIGNATURE_CERTIFICATE_CHAIN, chainBody.toByteArray());
 
-        // 6. Array of SignatureCertificateChain (FIELD_ARRAY = 2) di dalam SISContents
+        // 6. Array of SignatureCertificateChain (FIELD_ARRAY = 33) di dalam SISContents
         ByteArrayOutputStream chainArr = new ByteArrayOutputStream();
         chainArr.write(intToLe(FIELD_SIGNATURE_CERTIFICATE_CHAIN));
         chainArr.write(intToLe(tlvSignedChain.length));
         chainArr.write(pad4(tlvSignedChain));
         byte[] tlvChainArray = wrapTlv(FIELD_ARRAY, chainArr.toByteArray());
 
-        // 7. Gabungkan ke dalam body FIELD_CONTENTS (36)
+        // 7. Gabungkan ke dalam body FIELD_CONTENTS (12)
         ByteArrayOutputStream newContentsBody = new ByteArrayOutputStream();
-        newContentsBody.write(pad4(origContentsBody));
+        newContentsBody.write(pad4(cleanContentsBody));
         newContentsBody.write(tlvChainArray);
         byte[] newTlvContents = wrapTlv(FIELD_CONTENTS, newContentsBody.toByteArray());
 
@@ -142,11 +160,15 @@ public class SisxSigner {
             signedSisxOut.getParentFile().mkdirs();
         }
 
-        try (FileOutputStream fos = new FileOutputStream(signedSisxOut)) {
+        FileOutputStream fos = new FileOutputStream(signedSisxOut);
+        try {
             fos.write(sisBytes, 0, 16); // Header 16 byte UID asli
             fos.write(newTlvContents);  // SISContents lengkap dengan SignatureChain di dalamnya
+        } finally {
+            fos.close();
         }
     }
+	
 
     private static X509Certificate generateSelfSignedX509Certificate(KeyPair kp) throws Exception {
         PublicKey pubKey = kp.getPublic();

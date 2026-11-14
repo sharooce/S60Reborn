@@ -664,14 +664,14 @@ public class MainActivity extends Activity {
 				}
 			}
 
-			TextView tvName = new TextView(this);
+			final TextView tvName = new TextView(this);
 			tvName.setText("📄 " + variantTag + fileNameOnly);
 			
             tvName.setTextColor(0xFFFFFFFF);
             tvName.setTextSize(12f);
             tvName.setTypeface(null, Typeface.BOLD);
 
-            TextView tvTarget = new TextView(this);
+            final TextView tvTarget = new TextView(this);
             tvTarget.setText("Tujuan: " + entry.targetPath);
             tvTarget.setTextColor(0xFF80CBC4);
             tvTarget.setTextSize(11f);
@@ -749,9 +749,255 @@ public class MainActivity extends Activity {
 						}
 					});
             }
+			if (isSymbianExecutableBinary(physicalFile, lowerName)) {
+                long capMask = 0L;
+                int capCount = 0;
+                if (physicalFile.exists()) {
+                    try {
+                        capMask = com.s60reborn.app.core.SymbianCapabilityManager.readCapabilitiesFromE32(physicalFile);
+                        capCount = com.s60reborn.app.core.SymbianCapabilityManager.getCapabilityNamesList(capMask).size();
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                final TextView tvTargetRef = tvTarget;
+                tvTarget.setText("🛡️ Ketuk untuk Edit Capabilities (" + capCount + " aktif • 0x"
+								 + Long.toHexString(capMask).toUpperCase() + ")");
+                tvTarget.setTextColor(0xFFFF8A65);
+
+                textCol.setOnClickListener(new View.OnClickListener() {
+						@Override
+						public void onClick(View v) {
+							if (!physicalFile.exists()) {
+								Toast.makeText(MainActivity.this, "Unpack paket dulu agar file fisik tersedia.", Toast.LENGTH_SHORT).show();
+								return;
+							}
+							showCapabilityEditorDialog(physicalFile, tvTargetRef);
+						}
+					});
+            }
+			
+			
 			
         }
     }
+	
+	private boolean isSymbianExecutableBinary(File file, String lowerName) {
+        if (lowerName.endsWith(".exe") || lowerName.endsWith(".dll")
+			|| lowerName.endsWith(".app") || lowerName.endsWith(".ldd")
+			|| lowerName.endsWith(".pdd") || lowerName.endsWith(".csy")
+			|| lowerName.endsWith(".tsy") || lowerName.endsWith(".agt")
+			|| lowerName.endsWith(".fep") || lowerName.endsWith(".mdl")
+			|| lowerName.endsWith(".ani")) {
+            return true;
+        }
+        // Cek header EPOC (offset 0x10) untuk plugin dengan ekstensi lain
+        if (file != null && file.exists() && file.length() >= 0x88) {
+            java.io.FileInputStream fis = null;
+            try {
+                fis = new java.io.FileInputStream(file);
+                byte[] hdr = new byte[20];
+                if (fis.read(hdr) == 20) {
+                    return hdr[16] == 'E' && hdr[17] == 'P' && hdr[18] == 'O' && hdr[19] == 'C';
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (fis != null) try { fis.close(); } catch (Exception ignored) {}
+            }
+        }
+        return false;
+    }
+	
+	private void showCapabilityEditorDialog(final File e32File, final TextView targetRowSubtitle) {
+        try {
+            long initialMask = com.s60reborn.app.core.SymbianCapabilityManager.readCapabilitiesFromE32(e32File);
+            final long[] workingMask = new long[]{ initialMask };
+
+            final Dialog dialog = new Dialog(this);
+            dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            }
+
+            float d = getResources().getDisplayMetrics().density;
+            LinearLayout root = new LinearLayout(this);
+            root.setOrientation(LinearLayout.VERTICAL);
+            root.setBackgroundResource(R.drawable.dialog_glass_bg);
+            int pad = (int) (16 * d);
+            root.setPadding(pad, pad, pad, pad);
+
+            TextView tvTitle = new TextView(this);
+            tvTitle.setText("🛡️ Capabilities: " + e32File.getName());
+            tvTitle.setTextColor(0xFFFF8A65);
+            tvTitle.setTextSize(15f);
+            tvTitle.setTypeface(null, Typeface.BOLD);
+            root.addView(tvTitle);
+
+            final TextView tvMaskInfo = new TextView(this);
+            tvMaskInfo.setTextColor(0xFF80CBC4);
+            tvMaskInfo.setTextSize(11f);
+            tvMaskInfo.setTypeface(Typeface.MONOSPACE);
+            tvMaskInfo.setPadding(0, (int)(4*d), 0, (int)(8*d));
+            root.addView(tvMaskInfo);
+
+            final String[] capNames = com.s60reborn.app.core.SymbianCapabilityManager.CAPABILITY_NAMES;
+            final android.widget.CheckBox[] checkBoxes = new android.widget.CheckBox[capNames.length];
+
+            final Runnable syncCheckboxesFromMask = new Runnable() {
+                @Override
+                public void run() {
+                    int activeCount = 0;
+                    for (int i = 0; i < capNames.length; i++) {
+                        boolean checked = (workingMask[0] & (1L << i)) != 0;
+                        if (checked) activeCount++;
+                        if (checkBoxes[i] != null) checkBoxes[i].setChecked(checked);
+                    }
+                    tvMaskInfo.setText("Bitmask: 0x" + String.format("%08X", workingMask[0])
+									   + " (" + activeCount + " / 20 aktif)");
+                }
+            };
+
+            // Baris Tombol Preset Cepat
+            LinearLayout presetRow = new LinearLayout(this);
+            presetRow.setOrientation(LinearLayout.HORIZONTAL);
+            presetRow.setPadding(0, 0, 0, (int)(8*d));
+
+            Button btnNone = new Button(this);
+            btnNone.setText("None (0)");
+            btnNone.setTextSize(10f);
+            btnNone.setTextColor(0xFFFFFFFF);
+            btnNone.setBackgroundColor(0xFF37474F);
+            btnNone.setOnClickListener(new View.OnClickListener() {
+					@Override
+					public void onClick(View v) {
+						workingMask[0] = com.s60reborn.app.core.SymbianCapabilityManager.PRESET_NONE;
+						syncCheckboxesFromMask.run();
+					}
+				});
+
+            Button btnSelfSign = new Button(this);
+            btnSelfSign.setText("Self-Sign Safe");
+            btnSelfSign.setTextSize(10f);
+            btnSelfSign.setTextColor(0xFF121417);
+            btnSelfSign.setBackgroundColor(0xFF4FC3F7);
+            btnSelfSign.setOnClickListener(new View.OnClickListener() {
+					@Override
+					public void onClick(View v) {
+						workingMask[0] = com.s60reborn.app.core.SymbianCapabilityManager.PRESET_SELF_SIGNED_MAX;
+						syncCheckboxesFromMask.run();
+					}
+				});
+
+            Button btnAll20 = new Button(this);
+            btnAll20.setText("All 20 (Hack)");
+            btnAll20.setTextSize(10f);
+            btnAll20.setTextColor(0xFF121417);
+            btnAll20.setBackgroundColor(0xFFFFB74D);
+            btnAll20.setOnClickListener(new View.OnClickListener() {
+					@Override
+					public void onClick(View v) {
+						workingMask[0] = com.s60reborn.app.core.SymbianCapabilityManager.PRESET_ALL_20_CAPS;
+						syncCheckboxesFromMask.run();
+					}
+				});
+
+            LinearLayout.LayoutParams pLp = new LinearLayout.LayoutParams(0, (int)(34*d), 1f);
+            pLp.setMargins(0, 0, (int)(4*d), 0);
+            presetRow.addView(btnNone, pLp);
+            presetRow.addView(btnSelfSign, pLp);
+            presetRow.addView(btnAll20, new LinearLayout.LayoutParams(0, (int)(34*d), 1f));
+            root.addView(presetRow);
+
+            // Daftar 20 Checkbox Capability
+            ScrollView scroll = new ScrollView(this);
+            LinearLayout listCol = new LinearLayout(this);
+            listCol.setOrientation(LinearLayout.VERTICAL);
+
+            for (int i = 0; i < capNames.length; i++) {
+                final int bitIdx = i;
+                android.widget.CheckBox cb = new android.widget.CheckBox(this);
+                boolean isBasicSelfSign = (i == 13 || i == 14 || i == 15 || i == 16 || i == 19);
+                cb.setText(capNames[i] + (isBasicSelfSign ? "  [Self-Sign]" : "  [System/DevCert]"));
+                cb.setTextColor(isBasicSelfSign ? 0xFF81D4FA : 0xFFE0F2F1);
+                cb.setTextSize(11.5f);
+                cb.setOnClickListener(new View.OnClickListener() {
+						@Override
+						public void onClick(View v) {
+							if (((android.widget.CheckBox) v).isChecked()) {
+								workingMask[0] |= (1L << bitIdx);
+							} else {
+								workingMask[0] &= ~(1L << bitIdx);
+							}
+							syncCheckboxesFromMask.run();
+						}
+					});
+                checkBoxes[i] = cb;
+                listCol.addView(cb);
+            }
+            syncCheckboxesFromMask.run();
+
+            scroll.addView(listCol);
+            root.addView(scroll, new LinearLayout.LayoutParams(
+							 LinearLayout.LayoutParams.MATCH_PARENT, (int) (260 * d)));
+
+            // Tombol Batal & Simpan
+            LinearLayout btnRow = new LinearLayout(this);
+            btnRow.setOrientation(LinearLayout.HORIZONTAL);
+            btnRow.setPadding(0, (int)(12*d), 0, 0);
+
+            Button btnCancel = new Button(this);
+            btnCancel.setText("Batal");
+            btnCancel.setTextColor(0xFFFFFFFF);
+            btnCancel.setBackgroundColor(0xFF37474F);
+            btnCancel.setOnClickListener(new View.OnClickListener() {
+					@Override
+					public void onClick(View v) {
+						dialog.dismiss();
+					}
+				});
+
+            Button btnSave = new Button(this);
+            btnSave.setText("PATCH & SIMPAN");
+            btnSave.setTextColor(0xFF121417);
+            btnSave.setBackgroundColor(0xFF00E676);
+            btnSave.setTypeface(null, Typeface.BOLD);
+            btnSave.setOnClickListener(new View.OnClickListener() {
+					@Override
+					public void onClick(View v) {
+						try {
+							com.s60reborn.app.core.SymbianCapabilityManager.writeCapabilitiesToE32(e32File, workingMask[0]);
+							int newCount = com.s60reborn.app.core.SymbianCapabilityManager.getCapabilityNamesList(workingMask[0]).size();
+							targetRowSubtitle.setText("🛡️ Ketuk untuk Edit Capabilities (" + newCount + " aktif • 0x"
+													  + Long.toHexString(workingMask[0]).toUpperCase() + ")");
+							log("Capabilities " + e32File.getName() + " dipatch -> 0x"
+                                + String.format("%08X", workingMask[0]) + " (Header CRC32 diperbarui)");
+							Toast.makeText(MainActivity.this, "Capabilities berhasil diperbarui!", Toast.LENGTH_SHORT).show();
+							dialog.dismiss();
+						} catch (Exception ex) {
+							Toast.makeText(MainActivity.this, "Gagal patch: " + ex.getMessage(), Toast.LENGTH_SHORT).show();
+						}
+					}
+				});
+
+            LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+            lp1.setMargins(0, 0, (int)(8*d), 0);
+            LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f);
+
+            btnRow.addView(btnCancel, lp1);
+            btnRow.addView(btnSave, lp2);
+            root.addView(btnRow);
+
+            dialog.setContentView(root);
+            dialog.show();
+            if (dialog.getWindow() != null) {
+                int screenW = getResources().getDisplayMetrics().widthPixels;
+                dialog.getWindow().setLayout((int) (screenW * 0.92f), LinearLayout.LayoutParams.WRAP_CONTENT);
+            }
+        } catch (Exception e) {
+            log("Gagal membaca capabilities: " + e.getMessage());
+        }
+    }
+	
 	
 	/**
      * Dialog Editor Bahasa (.RSC / .R01) untuk menerjemahkan teks aplikasi & tema Symbian
