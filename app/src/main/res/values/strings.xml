@@ -1,7 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
     <string name="app_name">S60Reborn</string>
-    <string name="hello_world">Hello world!</string>
+    <string name="no_package_selected">Belum ada paket dipilih</string>
+    <string name="empty_file_list">Belum ada file. Buka paket .sis/.sisx atau klik + Tambah File.</string>
+    <string name="btn_close_project">✕ Tutup</string>
+    <string name="btn_close">Tutup</string>
+    <string name="btn_cancel">Batal</string>
+    <string name="btn_add">TAMBAHKAN</string>
+    <string name="btn_unpack_now">UNPACK SEKARANG</string>
 
+    <string name="about_title">⚡ S60Reborn Studio</string>
+    <string name="about_version">Version 1.0.0 • Pure Java Engine</string>
+    <string name="about_desc">Alat manajemen paket Symbian OS generasi baru untuk Android.\n\nFitur Utama:\n• Unpack &amp; Inspect SIS / SISX (S60v2 - Belle)\n• Visual PKG Builder &amp; Installer Notif Editor\n• Zlib Repacker &amp; X.509 Self-Signer\n\nDirancang ringan dan kompatibel penuh dengan emulator EKA2L1 maupun perangkat Symbian klasik.</string>
+
+    <string name="add_file_title">➕ Tambah File ke Paket</string>
+    <string name="add_file_folder_label">Pilih Folder Tujuan Instalasi di HP Symbian:</string>
+    <string name="add_file_custom_hint">Atau ketik path penuh, misal: !:\\data\\config.ini</string>
+
+    <string-array name="symbian_target_folders">
+        <item>!:\\sys\\bin\\ (File Aplikasi .exe / .dll)</item>
+        <item>!:\\resource\\apps\\ (Ikon .mif / Bahasa .rsc)</item>
+        <item>!:\\private\\10003a3f\\import\\apps\\ (Registrasi _reg.rsc)</item>
+        <item>!:\\data\\ (Data / Konfigurasi Umum)</item>
+        <item>C:\\data\\ (Memori Telepon)</item>
+        <item>E:\\data\\ (Kartu Memori)</item>
+        <item>Custom Path (Ketik Manual)</item>
+    </string-array>
 </resources>
+

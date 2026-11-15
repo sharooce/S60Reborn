@@ -8,463 +8,76 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.Deflater;
 
 public class SisxPacker {
 
-    // Konstanta Resmi Symbian OS 9.x (sisfieldtypes.h)
-    private static final int SISX_UID1_MAGIC = 0x10201A7A;
-    private static final int FIELD_STRING = 1;
-    private static final int FIELD_COMPRESSED = 2;
-    private static final int FIELD_VERSION = 3;
-    private static final int FIELD_VERSION_RANGE = 4;
-    private static final int FIELD_INFO = 5;
-    private static final int FIELD_SUPPORTED_LANGUAGES = 6;
-    private static final int FIELD_SUPPORTED_OPTIONS = 7;
-    private static final int FIELD_PREREQUISITES = 8;
-    private static final int FIELD_DEPENDENCY = 9;
-    private static final int FIELD_PROPERTIES = 10;
-    private static final int FIELD_PROPERTY = 11;
-    private static final int FIELD_CONTENTS = 12; // 0x0C
-    private static final int FIELD_SUPPORTED_OPTION = 15;
-    private static final int FIELD_SUPPORTED_LANGUAGE = 16;
-    private static final int FIELD_FILE_DESCRIPTION = 17;
-    private static final int FIELD_HASH = 18;
-    private static final int FIELD_IF = 19;
-    private static final int FIELD_ELSE_IF = 20;
-    private static final int FIELD_INSTALL_BLOCK = 21;
-    private static final int FIELD_EXPRESSION = 22;
-    private static final int FIELD_DATA_UNIT = 23;
-    private static final int FIELD_FILE_DATA = 24;
-    private static final int FIELD_DATA_INDEX = 25;
-    private static final int FIELD_CAPABILITIES = 32;
-    private static final int FIELD_ARRAY = 33;      // 0x21
-    private static final int FIELD_CONTROLLER = 34; // 0x22
-    private static final int FIELD_DATA = 35;       // 0x23
-    private static final int FIELD_BLOB = 36;       // 0x24
-    private static final int FIELD_DATE_TIME = 37;  // 0x25
-    private static final int FIELD_DATE = 38;       // 0x26
-    private static final int FIELD_TIME = 39;       // 0x27
+    private static final Charset UTF16LE = Charset.forName("UTF-16LE");
 
-	public static SisPackageInfo packFromPkg(File pkgFile, File outputSisFile) throws Exception {
-        File projectDir = pkgFile.getParentFile();
-        SisPackageInfo info = parsePkgFile(pkgFile, projectDir);
-
-        // TAMBAHKAN BLOK INI: Gunakan blueprint header_offset.txt jika tersedia
-        File manifestFile = new File(projectDir, "header_offset.txt");
-        if (manifestFile.exists()) {
-            SisManifestManager.ProjectManifest manifest = SisManifestManager.loadManifest(manifestFile);
-
-            // Sinkronkan perubahan metadata (Nama, Author, Versi, UID3) dari UI / project.pkg
-            manifest.uid3 = info.uid3;
-            manifest.appName = info.appName;
-            manifest.vendorName = info.vendorName;
-            manifest.majorVersion = info.majorVersion;
-            manifest.minorVersion = info.minorVersion;
-            manifest.buildVersion = info.buildVersion;
-
-            // Sinkronkan daftar file jika user menambah/menghapus file di UI
-            syncManifestFilesWithPkg(manifest, info.files);
-            SisManifestManager.saveManifest(manifestFile, manifest);
-
-            return SisManifestManager.buildSisxFromManifest(projectDir, manifest, outputSisFile);
-        }
-
-        // ... [kode fallback lama Anda tetap di bawah sini] ...
-		
-
-        if (info.files.isEmpty()) {
-            throw new IOException("0 file terbaca dari project.pkg! Periksa daftar file sebelum Build.");
-        }
-
-        List<byte[]> compressedBlocks = new ArrayList<>();
-        List<Long> exactCompSizes = new ArrayList<>();
-        List<byte[]> fileHashes = new ArrayList<>();
-        Map<String, Integer> sha1ToDataIndex = new HashMap<>();
-        MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
-
-        for (int i = 0; i < info.files.size(); i++) {
-            SisFileEntry entry = info.files.get(i);
-            entry.uncompressedSize = entry.rawData.length;
-
-            sha1.reset();
-            byte[] digest = sha1.digest(entry.rawData);
-            fileHashes.add(digest);
-
-			String hexHash = bytesToHex(digest);
-            if (sha1ToDataIndex.containsKey(hexHash)) {
-                int existingDataIdx = sha1ToDataIndex.get(hexHash);
-                entry.fileIndex = existingDataIdx;
-                entry.compressedSize = exactCompSizes.get(existingDataIdx);
-            } else {
-                int newDataIdx = compressedBlocks.size();
-                sha1ToDataIndex.put(hexHash, newDataIdx);
-                entry.fileIndex = newDataIdx;
-
-                byte[] comp = deflateBytes(entry.rawData);
-                byte[] compField = buildCompressedField(1, entry.uncompressedSize, comp);
-
-                // Panjang terkompresi di SISFileDescription mencakup header FIELD_COMPRESSED
-                long totalCompFieldLen = compField.length;
-                entry.compressedSize = totalCompFieldLen;
-                exactCompSizes.add(totalCompFieldLen);
-
-                compressedBlocks.add(compField);
-            }
-			
-        }
-
-		// 1. Controller: Langsung rangkai Tag 34 + Tag 2 + Compressed Data (TANPA panjang tengah)
-        byte[] rawController = buildControllerBytes(info, fileHashes);
-        byte[] compController = deflateBytes(rawController);
-        byte[] rawCompFieldCtrl = buildCompressedField(1, rawController.length, compController);
-
-        // Bungkus dengan FIELD_COMPRESSED (tag 2) beserta panjangnya
-        byte[] tlvCompCtrl = wrapTlv(FIELD_COMPRESSED, rawCompFieldCtrl);
-
-        // LANGSUNG tempel tag 34 di depan tlvCompCtrl (jangan tulis length lagi!)
-        ByteArrayOutputStream ctrlBlock = new ByteArrayOutputStream();
-        ctrlBlock.write(intToLe(34)); // FIELD_CONTROLLER
-        ctrlBlock.write(tlvCompCtrl);
-        byte[] tlvController = ctrlBlock.toByteArray();
-
-        // 2. Data: Langsung rangkai Tag 35 + Tag 2 + Compressed Data (TANPA panjang tengah)
-        byte[] rawDataBlock = buildDataBlockBytes(compressedBlocks);
-        byte[] compData = deflateBytes(rawDataBlock);
-        byte[] rawCompFieldData = buildCompressedField(1, rawDataBlock.length, compData);
-
-        // Bungkus dengan FIELD_COMPRESSED (tag 2) beserta panjangnya
-        byte[] tlvCompData = wrapTlv(FIELD_COMPRESSED, rawCompFieldData);
-
-        // LANGSUNG tempel tag 35 di depan tlvCompData (jangan tulis length lagi!)
-        ByteArrayOutputStream dataBlock = new ByteArrayOutputStream();
-        dataBlock.write(intToLe(35)); // FIELD_DATA
-        dataBlock.write(tlvCompData);
-        byte[] tlvData = dataBlock.toByteArray();
-
-        // 3. Masukkan keduanya ke FIELD_CONTENTS (12)
-        ByteArrayOutputStream contentsBody = new ByteArrayOutputStream();
-        contentsBody.write(tlvController);
-        contentsBody.write(tlvData);
-        byte[] tlvContents = wrapTlv(12, contentsBody.toByteArray());
-		
-
-        // 5. Header 16-byte SISX (UID1, UID2, UID3, UID_Checksum) + SISContents
-        info.uid1 = SISX_UID1_MAGIC;
-        info.uid2 = 0x00000000;
-        info.uidChecksum = calculateSymbianUidChecksum(info.uid1, info.uid2, info.uid3);
-
-        ByteBuffer headerBuf = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
-        headerBuf.putInt(info.uid1);
-        headerBuf.putInt(info.uid2);
-        headerBuf.putInt(info.uid3);
-        headerBuf.putInt(info.uidChecksum);
-
-        if (outputSisFile.getParentFile() != null && !outputSisFile.getParentFile().exists()) {
-            outputSisFile.getParentFile().mkdirs();
-        }
-
-        try (FileOutputStream fos = new FileOutputStream(outputSisFile)) {
-            fos.write(headerBuf.array());
-            fos.write(tlvContents);
-        }
-
-        return info;
-    }
-	
-	private static void syncManifestFilesWithPkg(
-		SisManifestManager.ProjectManifest manifest, List<SisFileEntry> pkgFiles) {
-
-        int mainInstallBlockId = -1;
-        int maxNodeId = 0;
-        for (SisManifestManager.TreeNode n : manifest.allNodes) {
-            if (n.nodeId > maxNodeId) maxNodeId = n.nodeId;
-            if (n.parentId == 0 && n.fieldType == FIELD_INSTALL_BLOCK) {
-                mainInstallBlockId = n.nodeId;
-            }
-        }
-
-        Map<String, SisManifestManager.TreeNode> targetToNode = new HashMap<String, SisManifestManager.TreeNode>();
-        for (SisManifestManager.TreeNode n : manifest.allNodes) {
-            if ("FILE_DESC".equals(n.nodeType)) {
-                for (SisFileEntry oldF : manifest.files) {
-                    if (oldF.fileIndex == n.fileRef && oldF.targetPath != null) {
-                        targetToNode.put(oldF.targetPath.toLowerCase(), n);
-                    }
-                }
-            }
-        }
-
-        java.util.Set<Integer> keptFileIndices = new java.util.HashSet<Integer>();
-        int maxIdx = -1;
-        for (SisFileEntry f : manifest.files) {
-            if (f.fileIndex > maxIdx) maxIdx = f.fileIndex;
-        }
-
-        List<SisFileEntry> syncedList = new ArrayList<SisFileEntry>();
-        for (SisFileEntry pf : pkgFiles) {
-            String key = pf.targetPath.toLowerCase();
-            if (targetToNode.containsKey(key)) {
-                int origIdx = targetToNode.get(key).fileRef;
-                pf.fileIndex = origIdx;
-                keptFileIndices.add(origIdx);
-                syncedList.add(pf);
-            } else {
-                int newIdx = ++maxIdx;
-                pf.fileIndex = newIdx;
-                keptFileIndices.add(newIdx);
-                syncedList.add(pf);
-
-                if (mainInstallBlockId != -1) {
-                    SisManifestManager.TreeNode newNode = new SisManifestManager.TreeNode(
-						++maxNodeId, mainInstallBlockId, FIELD_FILE_DESCRIPTION, "FILE_DESC"
-                    );
-                    newNode.fileRef = newIdx;
-                    manifest.allNodes.add(newNode);
-                }
-            }
-        }
-
-        // Pengganti removeIf untuk Java 7 menggunakan Iterator
-        java.util.Iterator<SisManifestManager.TreeNode> it = manifest.allNodes.iterator();
-        while (it.hasNext()) {
-            SisManifestManager.TreeNode n = it.next();
-            if ("FILE_DESC".equals(n.nodeType) && !keptFileIndices.contains(n.fileRef)) {
-                it.remove();
-            }
-        }
-        manifest.files = syncedList;
-    }
-	
-
-    public static SisPackageInfo packLegacyV2FromPkg(File pkgFile, File outputSisFile) throws Exception {
-        File projectDir = pkgFile.getParentFile();
-        SisPackageInfo info = parsePkgFile(pkgFile, projectDir);
-
-        int uid1 = info.uid3;
-        int uid2 = 0x10000419;
-        int uid3 = 0x10003A12;
-        int uidChecksum = calculateSymbianUidChecksum(uid1, uid2, uid3);
-
-        byte[] appNameBytes = info.appName.getBytes(StandardCharsets.UTF_16LE);
-
-        List<byte[]> compFiles = new ArrayList<>();
-        List<byte[]> dstPathBytesList = new ArrayList<>();
-        for (SisFileEntry f : info.files) {
-            f.uncompressedSize = f.rawData.length;
-            byte[] comp = deflateBytes(f.rawData);
-            f.compressedSize = comp.length;
-            compFiles.add(comp);
-            dstPathBytesList.add(f.targetPath.getBytes(StandardCharsets.UTF_16LE));
-        }
-
-        int headerSize = 64;
-        int ptrLangs = headerSize;
-        int ptrCompNames = ptrLangs + 4;
-        int compNameStrOffset = ptrCompNames + 8;
-        int ptrReqs = compNameStrOffset + pad4Len(appNameBytes.length);
-
-        byte[] reqNameBytes = "Series60ProductID".getBytes(StandardCharsets.UTF_16LE);
-        int reqRecordSize = 20 + 8 + pad4Len(reqNameBytes.length);
-        int ptrFiles = ptrReqs + reqRecordSize;
-
-        int fileRecordsHeaderTotal = info.files.size() * 40;
-        int dataCursor = ptrFiles + fileRecordsHeaderTotal;
-
-        ByteArrayOutputStream dynamicData = new ByteArrayOutputStream();
-        List<Integer> dstPtrs = new ArrayList<>();
-        List<Integer> dataPtrs = new ArrayList<>();
-
-        for (int i = 0; i < info.files.size(); i++) {
-            byte[] dstB = dstPathBytesList.get(i);
-            dstPtrs.add(dataCursor);
-            dynamicData.write(dstB);
-            int padDst = pad4Len(dstB.length) - dstB.length;
-            for (int p = 0; p < padDst; p++) dynamicData.write(0);
-            dataCursor += pad4Len(dstB.length);
-
-            byte[] compB = compFiles.get(i);
-            dataPtrs.add(dataCursor);
-            dynamicData.write(compB);
-            int padComp = pad4Len(compB.length) - compB.length;
-            for (int p = 0; p < padComp; p++) dynamicData.write(0);
-            dataCursor += pad4Len(compB.length);
-        }
-
-        ByteArrayOutputStream sisOut = new ByteArrayOutputStream();
-
-        ByteBuffer hdr = ByteBuffer.allocate(headerSize).order(ByteOrder.LITTLE_ENDIAN);
-        hdr.putInt(uid1);
-        hdr.putInt(uid2);
-        hdr.putInt(uid3);
-        hdr.putInt(uidChecksum);
-        hdr.putShort((short) 0);
-        hdr.putShort((short) 1);
-        hdr.putShort((short) info.files.size());
-        hdr.putShort((short) 1);
-        hdr.putShort((short) 0);
-        hdr.putShort((short) 0);
-        hdr.putShort((short) 0);
-        hdr.putShort((short) 0);
-        hdr.putInt(0);
-        hdr.putShort((short) 0);
-        hdr.putShort((short) 0);
-        hdr.putShort((short) info.majorVersion);
-        hdr.putShort((short) info.minorVersion);
-        hdr.putInt(info.buildVersion);
-        hdr.putInt(ptrLangs);
-        hdr.putInt(ptrFiles);
-        hdr.putInt(ptrReqs);
-        hdr.putInt(0);
-        hdr.putInt(ptrCompNames);
-        sisOut.write(hdr.array());
-
-        ByteBuffer langBuf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
-        langBuf.putShort((short) 1);
-        langBuf.putShort((short) 0);
-        sisOut.write(langBuf.array());
-
-        sisOut.write(intToLe(appNameBytes.length));
-        sisOut.write(intToLe(compNameStrOffset));
-        sisOut.write(pad4(appNameBytes));
-
-        ByteBuffer reqBuf = ByteBuffer.allocate(28).order(ByteOrder.LITTLE_ENDIAN);
-        reqBuf.putInt(0x101F6F88);
-        reqBuf.putShort((short) 2);
-        reqBuf.putShort((short) 0);
-        reqBuf.putInt(0);
-        reqBuf.putInt(reqNameBytes.length);
-        reqBuf.putInt(ptrReqs + 28);
-        reqBuf.putInt(0);
-        reqBuf.putInt(0);
-        sisOut.write(reqBuf.array());
-        sisOut.write(pad4(reqNameBytes));
-
-        for (int i = 0; i < info.files.size(); i++) {
-            SisFileEntry f = info.files.get(i);
-            ByteBuffer fRec = ByteBuffer.allocate(40).order(ByteOrder.LITTLE_ENDIAN);
-            fRec.putInt(0);
-            fRec.putInt(0);
-            fRec.putInt(0);
-            fRec.putInt(0);
-            fRec.putInt(0);
-            fRec.putInt(dstPathBytesList.get(i).length);
-            fRec.putInt(dstPtrs.get(i));
-            fRec.putInt((int) f.compressedSize);
-            fRec.putInt(dataPtrs.get(i));
-            fRec.putInt((int) f.uncompressedSize);
-            sisOut.write(fRec.array());
-        }
-
-        sisOut.write(dynamicData.toByteArray());
-
-        if (outputSisFile.getParentFile() != null && !outputSisFile.getParentFile().exists()) {
-            outputSisFile.getParentFile().mkdirs();
-        }
-        try (FileOutputStream fos = new FileOutputStream(outputSisFile)) {
-            fos.write(sisOut.toByteArray());
-        }
-
-        return info;
-    }
-
-    private static int pad4Len(int len) {
-        int rem = len % 4;
-        return (rem == 0) ? len : len + (4 - rem);
-    }
-
-    public static SisPackageInfo parsePkgFile(File pkgFile, File baseDir) throws IOException {
+    public static SisPackageInfo parsePkgFile(File pkgFile, File baseDir) throws Exception {
         SisPackageInfo info = new SisPackageInfo();
-        Pattern headerPat = Pattern.compile("#\\s*\\{\\s*\"([^\"]+)\"\\s*\\}\\s*,\\s*\\(\\s*(0x[0-9a-fA-F]+|\\d+)\\s*\\)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)");
-        Pattern vendorPat = Pattern.compile("%\\s*\\{\\s*\"([^\"]+)\"\\s*\\}");
+        info.files = new ArrayList<>();
+        if (baseDir == null) baseDir = pkgFile.getParentFile();
+
+        Pattern headerPat = Pattern.compile("#\\s*\\{\\s*\"([^\"]+)\"[^}]*\\}\\s*,\\s*\\(\\s*(0x[0-9a-fA-F]+|\\d+)\\s*\\)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)");
+        Pattern vendorPat = Pattern.compile("^:\\s*\"([^\"]+)\"");
         Pattern filePat = Pattern.compile("^\"([^\"]+)\"\\s*-\\s*\"([^\"]+)\"");
-        Pattern embeddedPat = Pattern.compile("^@\\s*\"([^\"]+)\"");
-        Pattern ifNotExistsPat = Pattern.compile("(?i)^IF\\s+NOT\\s+EXISTS\\s*\\(\\s*\"([^\"]+)\"\\s*\\)");
 
-        String activeConditionPath = null;
-
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(pkgFile), StandardCharsets.UTF_8))) {
+        try (BufferedReader br = new BufferedReader(new FileReader(pkgFile))) {
             String line;
+            int idx = 0;
             while ((line = br.readLine()) != null) {
                 line = line.trim();
                 if (line.isEmpty() || line.startsWith(";")) continue;
 
-                Matcher mIf = ifNotExistsPat.matcher(line);
-                if (mIf.find()) {
-                    activeConditionPath = mIf.group(1);
-                    continue;
-                }
-                if (line.equalsIgnoreCase("ENDIF")) {
-                    activeConditionPath = null;
-                    continue;
-                }
-
-                Matcher mEmb = embeddedPat.matcher(line);
-                if (mEmb.find()) {
-                    String subRel = mEmb.group(1).replace('\\', '/').trim();
-                    info.embeddedSisPaths.add(subRel);
-                    continue;
-                }
-
-                Matcher mHeader = headerPat.matcher(line);
-                if (mHeader.find()) {
-                    info.appName = mHeader.group(1);
-                    String uidStr = mHeader.group(2);
-                    info.uid3 = uidStr.startsWith("0x") || uidStr.startsWith("0X")
+                Matcher mHdr = headerPat.matcher(line);
+                if (mHdr.find()) {
+                    info.appName = mHdr.group(1);
+                    String uidStr = mHdr.group(2);
+                    info.uid3 = uidStr.toLowerCase().startsWith("0x")
 						? (int) Long.parseLong(uidStr.substring(2), 16)
 						: Integer.parseInt(uidStr);
-                    info.majorVersion = Integer.parseInt(mHeader.group(3));
-                    info.minorVersion = Integer.parseInt(mHeader.group(4));
-                    info.buildVersion = Integer.parseInt(mHeader.group(5));
+                    info.majorVersion = Integer.parseInt(mHdr.group(3));
+                    info.minorVersion = Integer.parseInt(mHdr.group(4));
+                    info.buildVersion = Integer.parseInt(mHdr.group(5));
                     continue;
                 }
 
-                Matcher mVendor = vendorPat.matcher(line);
-                if (mVendor.find()) {
-                    info.vendorName = mVendor.group(1);
+                Matcher mVen = vendorPat.matcher(line);
+                if (mVen.find()) {
+                    info.vendorName = mVen.group(1);
                     continue;
                 }
 
                 Matcher mFile = filePat.matcher(line);
                 if (mFile.find()) {
-                    String srcRel = mFile.group(1).replace('\\', '/').trim();
-                    String dstTarget = mFile.group(2).trim();
-
-                    if (dstTarget.startsWith("[Run During Install]")) continue;
-
-                    File srcFile = new File(baseDir, srcRel);
-                    if (!srcFile.exists() || srcFile.length() == 0) {
-                        throw new IOException("File aset hilang atau 0 byte: " + srcFile.getAbsolutePath());
-                    }
+                    String srcRel = mFile.group(1).replace('\\', '/');
+                    String dstSymbian = mFile.group(2);
 
                     SisFileEntry entry = new SisFileEntry();
+                    entry.fileIndex = idx++;
                     entry.localRelPath = srcRel;
-                    entry.targetPath = dstTarget;
-                    entry.rawData = readAllBytes(srcFile);
-                    entry.conditionNotExistsPath = activeConditionPath;
+                    entry.targetPath = dstSymbian;
+                    entry.operation = 1;
 
-                    String upperLine = line.toUpperCase();
-                    if (upperLine.contains("FT")) {
-                        entry.operation = 2;
-                        if (upperLine.contains("TC")) entry.operationOptions = 1;
-                    } else if (upperLine.contains("FR")) {
-                        entry.operation = 4;
-                        if (upperLine.contains("RI")) entry.operationOptions = 2;
+                    File srcFile = new File(baseDir, srcRel);
+                    if (srcFile.exists() && srcFile.isFile()) {
+                        entry.rawData = readAllBytes(srcFile);
+                        entry.uncompressedSize = entry.rawData.length;
+                        entry.compressedSize = entry.rawData.length;
+                    } else {
+                        entry.rawData = new byte[0];
                     }
-
                     info.files.add(entry);
                 }
             }
@@ -472,401 +85,401 @@ public class SisxPacker {
         return info;
     }
 
-    private static byte[] buildControllerBytes(SisPackageInfo info, List<byte[]> fileHashes) throws IOException {
-        // 0. KELOMPOKKAN VARIAN & KONDISI DI PALING ATAS
-        List<Integer> commonIdx = new ArrayList<>();
-        Map<String, List<Integer>> variantGroups = new LinkedHashMap<>();
-
-        for (int i = 0; i < info.files.size(); i++) {
-            SisFileEntry f = info.files.get(i);
-            String rel = f.localRelPath.replace('\\', '/');
-            if (rel.startsWith("varian_")) {
-                int slash = rel.indexOf('/');
-                String vKey = (slash > 0) ? rel.substring(0, slash) : "varian_1";
-                if (!variantGroups.containsKey(vKey)) {
-                    variantGroups.put(vKey, new ArrayList<Integer>());
-                }
-                variantGroups.get(vKey).add(i);
-            } else {
-                commonIdx.add(i);
-            }
-        }
-
-        if (variantGroups.size() <= 1) {
-            for (List<Integer> list : variantGroups.values()) {
-                commonIdx.addAll(list);
-            }
-            variantGroups.clear();
-        }
-
-        List<Integer> plainCommonIdx = new ArrayList<>();
-        Map<String, List<Integer>> condNotExistsGroups = new LinkedHashMap<>();
-
-        for (int idx : commonIdx) {
-            SisFileEntry f = info.files.get(idx);
-            if (f.conditionNotExistsPath != null && !f.conditionNotExistsPath.isEmpty()) {
-                if (!condNotExistsGroups.containsKey(f.conditionNotExistsPath)) {
-                    condNotExistsGroups.put(f.conditionNotExistsPath, new ArrayList<Integer>());
-                }
-                condNotExistsGroups.get(f.conditionNotExistsPath).add(idx);
-            } else {
-                plainCommonIdx.add(idx);
-            }
-        }
-
-        ByteArrayOutputStream ctrl = new ByteArrayOutputStream();
-
-        // 1. SISInfo (FIELD_INFO = 5)
-        ByteArrayOutputStream infoBody = new ByteArrayOutputStream();
-        infoBody.write(intToLe(info.uid3));
-        infoBody.write(wrapStringUtf16(info.vendorName));
-        infoBody.write(wrapStringArray(info.appName));
-        infoBody.write(wrapStringArray(info.vendorName));
-
-        ByteBuffer verBuf = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
-        verBuf.putInt(info.majorVersion);
-        verBuf.putInt(info.minorVersion);
-        verBuf.putInt(info.buildVersion);
-        infoBody.write(wrapTlv(FIELD_VERSION, verBuf.array()));
-
-        ByteBuffer dateBuf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
-        dateBuf.putShort((short) 2026);
-        dateBuf.put((byte) 10);
-        dateBuf.put((byte) 14);
-        ByteBuffer timeBuf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
-        timeBuf.put((byte) 9);
-        timeBuf.put((byte) 0);
-        timeBuf.put((byte) 0);
-        timeBuf.put((byte) 0);
-
-        ByteArrayOutputStream dtBody = new ByteArrayOutputStream();
-        dtBody.write(wrapTlv(FIELD_DATE, dateBuf.array()));
-        dtBody.write(wrapTlv(FIELD_TIME, timeBuf.array()));
-        infoBody.write(wrapTlv(FIELD_DATE_TIME, dtBody.toByteArray()));
-
-        ByteBuffer metaBuf = ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN);
-        metaBuf.put((byte) info.installType); // 0 = SA
-        metaBuf.put((byte) 0);                // Flags = 0
-        infoBody.write(metaBuf.array());
-
-        ctrl.write(wrapTlv(FIELD_INFO, infoBody.toByteArray()));
-
-        // 2. SISSupportedOptions (FIELD_SUPPORTED_OPTIONS = 7)
-        ctrl.write(wrapTlv(FIELD_SUPPORTED_OPTIONS, wrapTlv(FIELD_ARRAY, intToLe(FIELD_SUPPORTED_OPTION))));
-
-        // 3. SISSupportedLanguages (FIELD_SUPPORTED_LANGUAGES = 6 -> FIELD_ARRAY(33) -> FIELD_SUPPORTED_LANGUAGE(16))
-        ByteArrayOutputStream langArr = new ByteArrayOutputStream();
-        langArr.write(intToLe(FIELD_SUPPORTED_LANGUAGE));
-        langArr.write(intToLe(1)); // LANG_English = 1
-        ctrl.write(wrapTlv(FIELD_SUPPORTED_LANGUAGES, wrapTlv(FIELD_ARRAY, langArr.toByteArray())));
-
-        // 4. SISPrerequisites (FIELD_PREREQUISITES = 8)
-        ByteArrayOutputStream prereqBody = new ByteArrayOutputStream();
-        ByteArrayOutputStream depList = new ByteArrayOutputStream();
-        depList.write(intToLe(FIELD_DEPENDENCY));
-
-        ByteArrayOutputStream depItem = new ByteArrayOutputStream();
-        depItem.write(intToLe(0x101F7961)); // Series60ProductID S60v3
-        ByteBuffer vRange = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN);
-        vRange.putInt(0); vRange.putInt(0); vRange.putInt(0);
-        vRange.putInt(5); vRange.putInt(0); vRange.putInt(0);
-        depItem.write(wrapTlv(FIELD_VERSION_RANGE, vRange.array()));
-        depItem.write(wrapStringArray("Series60ProductID"));
-
-        byte[] depItemBytes = depItem.toByteArray();
-        depList.write(intToLe(depItemBytes.length));
-        depList.write(pad4(depItemBytes));
-        prereqBody.write(wrapTlv(FIELD_ARRAY, depList.toByteArray()));
-		prereqBody.write(wrapTlv(FIELD_ARRAY, intToLe(FIELD_DEPENDENCY)));
-        ctrl.write(wrapTlv(FIELD_PREREQUISITES, prereqBody.toByteArray()));
-
-        // 5. SISProperties (FIELD_PROPERTIES = 10)
-        ctrl.write(wrapTlv(FIELD_PROPERTIES, wrapTlv(FIELD_ARRAY, intToLe(FIELD_PROPERTY))));
-
-        // 6. SISInstallBlock (FIELD_INSTALL_BLOCK = 21)
-        ByteArrayOutputStream installBody = new ByteArrayOutputStream();
-        ByteArrayOutputStream fileArrayBody = new ByteArrayOutputStream();
-        fileArrayBody.write(intToLe(FIELD_FILE_DESCRIPTION));
-        for (int idx : plainCommonIdx) {
-            byte[] fdBytes = buildFileDescriptionBytes(info.files.get(idx), fileHashes.get(idx));
-            fileArrayBody.write(intToLe(fdBytes.length));
-            fileArrayBody.write(pad4(fdBytes));
-        }
-        installBody.write(wrapTlv(FIELD_ARRAY, fileArrayBody.toByteArray()));
-
-        ByteArrayOutputStream ifArrayBody = new ByteArrayOutputStream();
-        ifArrayBody.write(intToLe(FIELD_IF));
-
-        for (Map.Entry<String, List<Integer>> cEntry : condNotExistsGroups.entrySet()) {
-            ByteArrayOutputStream condIfBody = new ByteArrayOutputStream();
-            condIfBody.write(buildNotExistsExpression(cEntry.getKey()));
-            condIfBody.write(buildSingleInstallBlockForIndices(cEntry.getValue(), info, fileHashes));
-
-            byte[] condIfBytes = condIfBody.toByteArray();
-            ifArrayBody.write(intToLe(condIfBytes.length));
-            ifArrayBody.write(pad4(condIfBytes));
-        }
-
-        if (variantGroups.size() >= 2) {
-            List<List<Integer>> groupsList = new ArrayList<>(variantGroups.values());
-            byte[] ifBlockBytes = buildMultiVariantIfBlock(groupsList, info, fileHashes);
-            ifArrayBody.write(intToLe(ifBlockBytes.length));
-            ifArrayBody.write(pad4(ifBlockBytes));
-        }
-
-        installBody.write(wrapTlv(FIELD_ARRAY, ifArrayBody.toByteArray()));
-        ctrl.write(wrapTlv(FIELD_INSTALL_BLOCK, installBody.toByteArray()));
-
-        // 7. DataIndex (FIELD_DATA_INDEX = 25)
-        ctrl.write(wrapTlv(FIELD_DATA_INDEX, intToLe(0)));
-
-        return ctrl.toByteArray();
+    public static SisPackageInfo packFromPkg(File pkgFile, File outputSisx) throws Exception {
+        SisPackageInfo info = parsePkgFile(pkgFile, pkgFile.getParentFile());
+        packModernSisx(info, info.files, outputSisx);
+        return info;
     }
-	
 
-	private static byte[] buildFileDescriptionBytes(SisFileEntry f, byte[] sha1Hash) throws IOException {
-        ByteArrayOutputStream fd = new ByteArrayOutputStream();
-        fd.write(wrapStringUtf16(f.targetPath)); // 1. Target
-        fd.write(wrapStringUtf16(""));           // 2. MimeType
+    public static SisPackageInfo packLegacyV2FromPkg(File pkgFile, File outputSis) throws Exception {
+        SisPackageInfo info = parsePkgFile(pkgFile, pkgFile.getParentFile());
+        packLegacySis(info, info.files, outputSis);
+        return info;
+    }
 
-        // 3. Hash (FIELD_HASH = 18) WAJIB lebih dulu
-        ByteArrayOutputStream hashBody = new ByteArrayOutputStream();
-        hashBody.write(intToLe(1)); // SHA1
-        hashBody.write(wrapTlv(FIELD_BLOB, sha1Hash));
-        fd.write(wrapTlv(FIELD_HASH, hashBody.toByteArray()));
+    public static void packFromPkg(File pkgFile, File baseDir, File outputSisx) throws Exception {
+        SisPackageInfo info = parsePkgFile(pkgFile, baseDir);
+        packModernSisx(info, info.files, outputSisx);
+    }
 
-        // 4. Capabilities (FIELD_CAPABILITIES = 32): Baca 8 byte dari offset 0x80 jika file .exe / .dll
-        byte[] capBytes = extractEpocCapabilities(f.targetPath, f.rawData);
-        if (capBytes != null) {
-            fd.write(wrapTlv(FIELD_CAPABILITIES, capBytes));
+    public static void packLegacyV2FromPkg(File pkgFile, File baseDir, File outputSis) throws Exception {
+        SisPackageInfo info = parsePkgFile(pkgFile, baseDir);
+        packLegacySis(info, info.files, outputSis);
+    }
+
+    public static void packPackage(SisPackageInfo info, List<SisFileEntry> files, File outputFile, int versionMode) throws Exception {
+        if (versionMode == 1) {
+            packLegacySis(info, files, outputFile);
+        } else {
+            packModernSisx(info, files, outputFile);
         }
-
-        // 5. Operation (4), OperationOptions (4), CompressedLength (8), UncompressedLength (8), FileIndex (4)
-        ByteBuffer tail = ByteBuffer.allocate(28).order(ByteOrder.LITTLE_ENDIAN);
-        tail.putInt(f.operation > 0 ? f.operation : 1);
-        tail.putInt(f.operationOptions);
-        tail.putLong(f.compressedSize);
-        tail.putLong(f.uncompressedSize);
-        tail.putInt(f.fileIndex);
-        fd.write(tail.array());
-
-        return fd.toByteArray();
     }
 
     /**
-     * Mengekstrak 8-byte bitmask kapabilitas dari header E32Image (.exe / .dll) Symbian OS 9.x (offset 0x80)
+     * Pengemasan Modern SISX (Symbian 9.x / S60v3 - Belle) sesuai spesifikasi CSISController
      */
-    private static byte[] extractEpocCapabilities(String targetPath, byte[] rawData) {
-        if (rawData == null || rawData.length < 0x88) return null;
-        String lower = targetPath.toLowerCase();
-        if (!lower.endsWith(".exe") && !lower.endsWith(".dll")) return null;
+    public static void packModernSisx(SisPackageInfo info, List<SisFileEntry> files, File outputFile) throws Exception {
+        // 1. Bangun blok SISController lengkap (Info, Options, Languages, Prerequisites, Properties, InstallBlock, DataIndex)
+        byte[] controllerBytes = buildFullControllerBlock(info, files);
+        byte[] compressedController = wrapAsCompressed(controllerBytes);
 
-        // Cek signature 'EPOC' di offset 0x10 (16) pada header E32Image
-        if (rawData[16] == 'E' && rawData[17] == 'P' && rawData[18] == 'O' && rawData[19] == 'C') {
-            byte[] caps = new byte[8];
-            System.arraycopy(rawData, 0x80, caps, 0, 8);
-            return caps;
+        // 2. Bangun blok SISData (setiap file dikompresi Zlib di dalam FIELD_FILE_DATA)
+        byte[] dataBytes = buildDataBlock(files);
+
+        // 3. Susun isi FIELD_CONTENTS (Tag 12):
+        //    FIELD_CONTROLLER (Tag 13) + FIELD_DATA (Tag 30)
+        //    (Checksum 34 & 35 dihilangkan karena opsional dan akan dianggap corrupt jika tidak dihitung CRC16-CCITT)
+        ByteArrayOutputStream contentsPayload = new ByteArrayOutputStream();
+        writeTlvField(contentsPayload, SisField.FIELD_CONTROLLER, compressedController);
+        contentsPayload.write(dataBytes);
+
+        byte[] contentsPayloadBytes = contentsPayload.toByteArray();
+
+        ByteArrayOutputStream contentsBlock = new ByteArrayOutputStream();
+        writeTlvField(contentsBlock, SisField.FIELD_CONTENTS, contentsPayloadBytes);
+        byte[] finalContents = contentsBlock.toByteArray();
+
+        // 4. Header 16 byte SISX
+        int uid1 = SisField.SISX_UID1_MAGIC; // 0x10201A7A
+        int uid2 = 0x00000000;
+        int uid3 = info.uid3;
+        int uidChecksum = SisField.calculateSymbianUidChecksum(uid1, uid2, uid3);
+
+        ByteBuffer header = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+        header.putInt(uid1);
+        header.putInt(uid2);
+        header.putInt(uid3);
+        header.putInt(uidChecksum);
+
+        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+            fos.write(header.array());
+            fos.write(finalContents);
         }
-        return null;
     }
-	
 
-    private static byte[] buildMultiVariantIfBlock(
-		List<List<Integer>> groups,
-		SisPackageInfo info,
-		List<byte[]> fileHashes) throws IOException {
+    private static byte[] buildFullControllerBlock(SisPackageInfo info, List<SisFileEntry> files) throws Exception {
+        ByteArrayOutputStream ctrl = new ByteArrayOutputStream();
 
-        ByteArrayOutputStream exprBody = new ByteArrayOutputStream();
-        exprBody.write(intToLe(12)); // EPrimTypeNumber = 12
-        exprBody.write(intToLe(1));  // IntValue = 1 (True)
-        byte[] tlvExpr = wrapTlv(FIELD_EXPRESSION, exprBody.toByteArray());
+        String appName = (info.appName != null && !info.appName.isEmpty()) ? info.appName : "S60App";
+        String vendorName = (info.vendorName != null && !info.vendorName.isEmpty()) ? info.vendorName : "S60Reborn";
 
-        byte[] branch1Block = buildSingleInstallBlockForIndices(groups.get(0), info, fileHashes);
+        // 1. FIELD_INFO (Tag 14)
+        ByteArrayOutputStream infoBody = new ByteArrayOutputStream();
+        // - UID (Tag 9)
+        writeTlvField(infoBody, SisField.FIELD_UID, int32(info.uid3));
+        // - VendorUniqueName (Tag 1: FIELD_STRING)
+        writeTlvField(infoBody, SisField.FIELD_STRING, vendorName.getBytes(UTF16LE));
+        // - ComponentNames (Tag 2: FIELD_ARRAY of FIELD_STRING)
+        writeTlvField(infoBody, SisField.FIELD_ARRAY, buildStringArrayPayload(appName));
+        // - VendorNames (Tag 2: FIELD_ARRAY of FIELD_STRING)
+        writeTlvField(infoBody, SisField.FIELD_ARRAY, buildStringArrayPayload(vendorName));
+        // - Version (Tag 4: FIELD_VERSION)
+        ByteBuffer ver = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        ver.putInt(info.majorVersion);
+        ver.putInt(info.minorVersion);
+        ver.putInt(info.buildVersion);
+        writeTlvField(infoBody, SisField.FIELD_VERSION, ver.array());
+        // - CreationTime (Tag 8: FIELD_DATE_TIME -> FIELD_DATE (6) + FIELD_TIME (7))
+        ByteArrayOutputStream dtBody = new ByteArrayOutputStream();
+        ByteBuffer dateBuf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
+        dateBuf.putShort((short) 2026);
+        dateBuf.put((byte) 10); // Month (0-based: Nov = 10)
+        dateBuf.put((byte) 14); // Day
+        writeTlvField(dtBody, SisField.FIELD_DATE, dateBuf.array());
+        ByteBuffer timeBuf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN);
+        timeBuf.put((byte) 12); // Hour
+        timeBuf.put((byte) 0);  // Minute
+        timeBuf.put((byte) 0);  // Second
+        timeBuf.put((byte) 0);  // Pad
+        writeTlvField(dtBody, SisField.FIELD_TIME, timeBuf.array());
+        writeTlvField(infoBody, SisField.FIELD_DATE_TIME, dtBody.toByteArray());
+        // - InstallType (1 byte: 0 = SA) + InstallFlags (1 byte: 0)
+        infoBody.write(0);
+        infoBody.write(0);
 
-        ByteArrayOutputStream elseIfArr = new ByteArrayOutputStream();
-        elseIfArr.write(intToLe(FIELD_ELSE_IF));
-        for (int g = 1; g < groups.size(); g++) {
-            ByteArrayOutputStream elseIfItem = new ByteArrayOutputStream();
-            elseIfItem.write(tlvExpr);
-            elseIfItem.write(buildSingleInstallBlockForIndices(groups.get(g), info, fileHashes));
+        writeTlvField(ctrl, SisField.FIELD_INFO, infoBody.toByteArray());
 
-            byte[] itemBytes = elseIfItem.toByteArray();
-            elseIfArr.write(intToLe(itemBytes.length));
-            elseIfArr.write(pad4(itemBytes));
+        // 2. FIELD_SUPPORTED_OPTIONS (Tag 16) -> FIELD_ARRAY kosong bertipe FIELD_SUPPORTED_OPTION (20)
+        writeTlvField(ctrl, SisField.FIELD_SUPPORTED_OPTIONS, buildEmptyArrayPayload(SisField.FIELD_SUPPORTED_OPTION));
+
+        // 3. FIELD_SUPPORTED_LANGUAGES (Tag 15) -> FIELD_ARRAY berisi 1 FIELD_SUPPORTED_LANGUAGE (11) = 1 (English)
+        ByteArrayOutputStream langArr = new ByteArrayOutputStream();
+        langArr.write(int32(SisField.FIELD_SUPPORTED_LANGUAGE));
+        langArr.write(int32(4)); // item length
+        langArr.write(int32(1)); // ELangEnglish = 1
+        writeTlvField(ctrl, SisField.FIELD_SUPPORTED_LANGUAGES, langArr.toByteArray());
+
+        // 4. FIELD_PREREQUISITES (Tag 17) -> TargetDevices (ARRAY of FIELD_DEPENDENCY) + Dependencies (ARRAY of FIELD_DEPENDENCY)
+        ByteArrayOutputStream prereqBody = new ByteArrayOutputStream();
+        // Target Device: Series60ProductID [0x101F7961] v0.0.0 - v5.0.0
+        ByteArrayOutputStream depBody = new ByteArrayOutputStream();
+        writeTlvField(depBody, SisField.FIELD_UID, int32(0x101F7961));
+        ByteBuffer vFrom = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putInt(0).putInt(0).putInt(0);
+        ByteBuffer vTo = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putInt(5).putInt(0).putInt(0);
+        ByteArrayOutputStream vRange = new ByteArrayOutputStream();
+        writeTlvField(vRange, SisField.FIELD_VERSION, vFrom.array());
+        writeTlvField(vRange, SisField.FIELD_VERSION, vTo.array());
+        writeTlvField(depBody, SisField.FIELD_VERSION_RANGE, vRange.toByteArray());
+        writeTlvField(depBody, SisField.FIELD_ARRAY, buildStringArrayPayload("Series60ProductID"));
+        byte[] depBytes = depBody.toByteArray();
+
+        ByteArrayOutputStream targetDevArr = new ByteArrayOutputStream();
+        targetDevArr.write(int32(SisField.FIELD_DEPENDENCY));
+        targetDevArr.write(int32(depBytes.length));
+        targetDevArr.write(depBytes);
+        writeAlign4(targetDevArr, depBytes.length);
+
+        writeTlvField(prereqBody, SisField.FIELD_ARRAY, targetDevArr.toByteArray());
+        writeTlvField(prereqBody, SisField.FIELD_ARRAY, buildEmptyArrayPayload(SisField.FIELD_DEPENDENCY));
+        writeTlvField(ctrl, SisField.FIELD_PREREQUISITES, prereqBody.toByteArray());
+
+        // 5. FIELD_PROPERTIES (Tag 19) -> FIELD_ARRAY kosong bertipe FIELD_PROPERTY (18)
+        writeTlvField(ctrl, SisField.FIELD_PROPERTIES, buildEmptyArrayPayload(SisField.FIELD_PROPERTY));
+
+        // 6. FIELD_INSTALL_BLOCK (Tag 28) -> Files (ARRAY of FIELD_FILE_DESCRIPTION) + IfBlocks (ARRAY of FIELD_IF)
+        ByteArrayOutputStream filesArr = new ByteArrayOutputStream();
+        filesArr.write(int32(SisField.FIELD_FILE_DESCRIPTION));
+        for (int i = 0; i < files.size(); i++) {
+            byte[] fdBytes = buildFullFileDescription(files.get(i), i);
+            filesArr.write(int32(fdBytes.length));
+            filesArr.write(fdBytes);
+            writeAlign4(filesArr, fdBytes.length);
         }
 
-        ByteArrayOutputStream sisIfBody = new ByteArrayOutputStream();
-        sisIfBody.write(tlvExpr);
-        sisIfBody.write(branch1Block);
-        sisIfBody.write(wrapTlv(FIELD_ARRAY, elseIfArr.toByteArray()));
-        return sisIfBody.toByteArray();
+        ByteArrayOutputStream installBody = new ByteArrayOutputStream();
+        writeTlvField(installBody, SisField.FIELD_ARRAY, filesArr.toByteArray());
+        writeTlvField(installBody, SisField.FIELD_ARRAY, buildEmptyArrayPayload(SisField.FIELD_IF));
+        writeTlvField(ctrl, SisField.FIELD_INSTALL_BLOCK, installBody.toByteArray());
+
+        // 7. FIELD_DATA_INDEX (Tag 40) -> 0
+        writeTlvField(ctrl, SisField.FIELD_DATA_INDEX, int32(0));
+
+        return ctrl.toByteArray();
     }
 
-    private static byte[] buildNotExistsExpression(String checkTargetPath) throws IOException {
-        ByteArrayOutputStream strExpr = new ByteArrayOutputStream();
-        strExpr.write(intToLe(10)); // EPrimTypeString = 10
-        strExpr.write(intToLe(0));
-        strExpr.write(wrapStringUtf16(checkTargetPath));
-        byte[] tlvStrExpr = wrapTlv(FIELD_EXPRESSION, strExpr.toByteArray());
+    private static byte[] buildFullFileDescription(SisFileEntry f, int fileIndex) throws Exception {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] raw = (f.rawData != null) ? f.rawData : new byte[0];
 
-        ByteArrayOutputStream existsExpr = new ByteArrayOutputStream();
-        existsExpr.write(intToLe(1000)); // EFuncExists = 1000
-        existsExpr.write(intToLe(0));
-        existsExpr.write(tlvStrExpr);
-        byte[] tlvExistsExpr = wrapTlv(FIELD_EXPRESSION, existsExpr.toByteArray());
+        // 1. TargetPath (Tag 1: FIELD_STRING)
+        String dst = (f.targetPath != null ? f.targetPath : "C:\\Data\\file.bin").replace('/', '\\');
+        writeTlvField(bos, SisField.FIELD_STRING, dst.getBytes(UTF16LE));
 
-        ByteArrayOutputStream notExpr = new ByteArrayOutputStream();
-        notExpr.write(intToLe(7)); // EUnaryOpNot = 7
-        notExpr.write(intToLe(0));
-        notExpr.write(tlvExistsExpr);
-        return wrapTlv(FIELD_EXPRESSION, notExpr.toByteArray());
-    }
+        // 2. MimeType (Tag 1: FIELD_STRING kosong)
+        writeTlvField(bos, SisField.FIELD_STRING, new byte[0]);
 
-    private static byte[] buildSingleInstallBlockForIndices(
-		List<Integer> indices,
-		SisPackageInfo info,
-		List<byte[]> fileHashes) throws IOException {
+        // 3. FIELD_HASH (Tag 25): HashAlgorithm (4B: 1 = SHA-1) + FIELD_BLOB (Tag 37: 20 byte SHA-1 digest)
+        MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
+        byte[] digest = sha1.digest(raw);
+        ByteArrayOutputStream hashBody = new ByteArrayOutputStream();
+        hashBody.write(int32(1)); // EHashAlgSHA1 = 1
+        writeTlvField(hashBody, SisField.FIELD_BLOB, digest);
+        writeTlvField(bos, SisField.FIELD_HASH, hashBody.toByteArray());
 
-        ByteArrayOutputStream fileArr = new ByteArrayOutputStream();
-        fileArr.write(intToLe(FIELD_FILE_DESCRIPTION));
-        for (int idx : indices) {
-            byte[] fdBytes = buildFileDescriptionBytes(info.files.get(idx), fileHashes.get(idx));
-            fileArr.write(intToLe(fdBytes.length));
-            fileArr.write(pad4(fdBytes));
-        }
-        ByteArrayOutputStream blockBody = new ByteArrayOutputStream();
-        blockBody.write(wrapTlv(FIELD_ARRAY, fileArr.toByteArray()));
-        blockBody.write(wrapTlv(FIELD_ARRAY, intToLe(FIELD_IF)));
-        return wrapTlv(FIELD_INSTALL_BLOCK, blockBody.toByteArray());
-    }
+        // 4. 28-byte fixed tail: operation(4) + options(4) + compressedSize(8) + uncompressedSize(8) + fileIndex(4)
+        byte[] compData = zlibCompress(raw);
+        ByteBuffer tail = ByteBuffer.allocate(28).order(ByteOrder.LITTLE_ENDIAN);
+        tail.putInt(1); // EOpInstall = 1
+        tail.putInt(0); // Options = 0
+        tail.putLong(compData.length);
+        tail.putLong(raw.length);
+        tail.putInt(fileIndex);
+        bos.write(tail.array());
 
-	private static byte[] buildDataBlockBytes(List<byte[]> wrappedFileDatas) throws IOException {
-        // Susun FIELD_ARRAY(33) -> FIELD_FILE_DATA(24) -> isi file
-        ByteArrayOutputStream fileDataArr = new ByteArrayOutputStream();
-        fileDataArr.write(intToLe(FIELD_FILE_DATA));
-        for (byte[] item : wrappedFileDatas) {
-            // Setiap item adalah TLV FIELD_COMPRESSED (tag 2) untuk file fisik tersebut
-            byte[] tlvFileComp = wrapTlv(FIELD_COMPRESSED, item);
-            fileDataArr.write(intToLe(tlvFileComp.length));
-            fileDataArr.write(pad4(tlvFileComp));
-        }
-        byte[] dataUnitBody = wrapTlv(FIELD_ARRAY, fileDataArr.toByteArray());
-
-        // Susun FIELD_ARRAY(33) -> FIELD_DATA_UNIT(23)
-        ByteArrayOutputStream unitArr = new ByteArrayOutputStream();
-        unitArr.write(intToLe(FIELD_DATA_UNIT));
-        unitArr.write(intToLe(dataUnitBody.length));
-        unitArr.write(pad4(dataUnitBody));
-
-        // Kembalikan raw array data unit (nanti dikompresi oleh packFromPkg)
-        return wrapTlv(FIELD_ARRAY, unitArr.toByteArray());
-    }
-
-    private static byte[] buildCompressedField(int algorithm, long uncompressedSize, byte[] compressedData) throws IOException {
-        ByteArrayOutputStream compHeadBody = new ByteArrayOutputStream();
-        compHeadBody.write(intToLe(algorithm)); // 1 = Zlib (Deflate)
-        ByteBuffer uSizeBuf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putLong(uncompressedSize);
-        compHeadBody.write(uSizeBuf.array());
-        compHeadBody.write(compressedData);
-        return compHeadBody.toByteArray();
-    }
-	
-	
-	
-
-    private static byte[] deflateBytes(byte[] raw) {
-        Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION);
-        deflater.setInput(raw);
-        deflater.finish();
-        ByteArrayOutputStream bos = new ByteArrayOutputStream(raw.length);
-        byte[] buf = new byte[4096];
-        while (!deflater.finished()) {
-            int count = deflater.deflate(buf);
-            bos.write(buf, 0, count);
-        }
-        deflater.end();
         return bos.toByteArray();
     }
 
-    public static int calculateSymbianUidChecksum(int uid1, int uid2, int uid3) {
-        byte[] uidBytes = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
-			.putInt(uid1).putInt(uid2).putInt(uid3).array();
-        byte[] evenBytes = new byte[6];
-        byte[] oddBytes = new byte[6];
-        for (int i = 0; i < 6; i++) {
-            evenBytes[i] = uidBytes[i * 2];
-            oddBytes[i] = uidBytes[i * 2 + 1];
+    private static byte[] buildDataBlock(List<SisFileEntry> files) throws Exception {
+        ByteArrayOutputStream filesArr = new ByteArrayOutputStream();
+        filesArr.write(int32(SisField.FIELD_FILE_DATA));
+
+        for (SisFileEntry f : files) {
+            byte[] raw = (f.rawData != null) ? f.rawData : new byte[0];
+            byte[] compBlock = wrapAsCompressed(raw);
+            filesArr.write(int32(compBlock.length));
+            filesArr.write(compBlock);
+            writeAlign4(filesArr, compBlock.length);
         }
-        int crcEven = crc16Ccitt(evenBytes);
-        int crcOdd = crc16Ccitt(oddBytes);
-        return (crcOdd << 16) | (crcEven & 0xFFFF);
+
+        ByteArrayOutputStream unitBody = new ByteArrayOutputStream();
+        writeTlvField(unitBody, SisField.FIELD_ARRAY, filesArr.toByteArray());
+        byte[] unitBytes = unitBody.toByteArray();
+
+        ByteArrayOutputStream unitsArr = new ByteArrayOutputStream();
+        unitsArr.write(int32(SisField.FIELD_DATA_UNIT));
+        unitsArr.write(int32(unitBytes.length));
+        unitsArr.write(unitBytes);
+        writeAlign4(unitsArr, unitBytes.length);
+
+        ByteArrayOutputStream dataBody = new ByteArrayOutputStream();
+        writeTlvField(dataBody, SisField.FIELD_ARRAY, unitsArr.toByteArray());
+
+        ByteArrayOutputStream rootData = new ByteArrayOutputStream();
+        writeTlvField(rootData, SisField.FIELD_DATA, dataBody.toByteArray());
+        return rootData.toByteArray();
     }
 
-    private static int crc16Ccitt(byte[] data) {
-        int crc = 0;
-        for (byte b : data) {
-            crc ^= (b & 0xFF) << 8;
-            for (int i = 0; i < 8; i++) {
-                if ((crc & 0x8000) != 0) {
-                    crc = (crc << 1) ^ 0x1021;
-                } else {
-                    crc <<= 1;
-                }
-            }
+    public static void packLegacySis(SisPackageInfo info, List<SisFileEntry> files, File outputFile) throws Exception {
+        int numFiles = files.size();
+        byte[] appNameUtf16 = (info.appName != null ? info.appName : "App").getBytes(UTF16LE);
+
+        List<byte[]> dstPathsUtf16 = new ArrayList<>();
+        List<byte[]> compBlobs = new ArrayList<>();
+
+        for (SisFileEntry f : files) {
+            String dst = (f.targetPath != null ? f.targetPath : "C:\\Data\\file.bin").replace('/', '\\');
+            dstPathsUtf16.add(dst.getBytes(UTF16LE));
+            byte[] raw = f.rawData != null ? f.rawData : new byte[0];
+            compBlobs.add(zlibCompress(raw));
         }
-        return crc & 0xFFFF;
+
+        int cursor = 64;
+        int ptrLangs = cursor;
+        cursor += 2;
+        int ptrCompNames = cursor;
+        cursor += 8;
+        int offAppName = cursor;
+        cursor += appNameUtf16.length;
+        int ptrFiles = cursor;
+        cursor += numFiles * 40;
+
+        int[] offDstNames = new int[numFiles];
+        for (int i = 0; i < numFiles; i++) {
+            offDstNames[i] = cursor;
+            cursor += dstPathsUtf16.get(i).length;
+        }
+        int[] offFileData = new int[numFiles];
+        for (int i = 0; i < numFiles; i++) {
+            offFileData[i] = cursor;
+            cursor += compBlobs.get(i).length;
+        }
+
+        int uid1 = info.uid3;
+        int uid2 = SisField.LEGACY_SIS_UID2_MAGIC;
+        int uid3 = 0x10003A12;
+        int uidChecksum = SisField.calculateSymbianUidChecksum(uid1, uid2, uid3);
+
+        ByteBuffer out = ByteBuffer.allocate(cursor).order(ByteOrder.LITTLE_ENDIAN);
+        out.putInt(0, uid1);
+        out.putInt(4, uid2);
+        out.putInt(8, uid3);
+        out.putInt(12, uidChecksum);
+        out.putShort(16, (short) 0x0001);
+        out.putShort(18, (short) 1);
+        out.putShort(20, (short) numFiles);
+        out.putShort(32, (short) 0x0000);
+        out.putShort(36, (short) info.majorVersion);
+        out.putShort(38, (short) info.minorVersion);
+        out.putInt(40, info.buildVersion);
+        out.putInt(44, ptrLangs);
+        out.putInt(48, ptrFiles);
+        out.putInt(60, ptrCompNames);
+
+        out.position(ptrLangs);
+        out.putShort((short) 1);
+        out.position(ptrCompNames);
+        out.putInt(appNameUtf16.length);
+        out.putInt(offAppName);
+        out.position(offAppName);
+        out.put(appNameUtf16);
+
+        out.position(ptrFiles);
+        for (int i = 0; i < numFiles; i++) {
+            byte[] raw = files.get(i).rawData != null ? files.get(i).rawData : new byte[0];
+            out.putInt(0);
+            out.putInt(0);
+            out.putInt(0);
+            out.putInt(0);
+            out.putInt(0);
+            out.putInt(dstPathsUtf16.get(i).length);
+            out.putInt(offDstNames[i]);
+            out.putInt(compBlobs.get(i).length);
+            out.putInt(offFileData[i]);
+            out.putInt(raw.length);
+        }
+
+        for (int i = 0; i < numFiles; i++) {
+            out.position(offDstNames[i]);
+            out.put(dstPathsUtf16.get(i));
+        }
+        for (int i = 0; i < numFiles; i++) {
+            out.position(offFileData[i]);
+            out.put(compBlobs.get(i));
+        }
+
+        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+            fos.write(out.array());
+        }
     }
 
-    private static byte[] wrapTlv(int type, byte[] data) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        out.write(intToLe(type));
-        out.write(intToLe(data.length));
-        out.write(pad4(data));
-        return out.toByteArray();
-    }
-
-    private static byte[] wrapStringUtf16(String str) throws IOException {
-        byte[] strBytes = str.getBytes(StandardCharsets.UTF_16LE);
-        return wrapTlv(FIELD_STRING, strBytes);
-    }
-
-    private static byte[] wrapStringArray(String str) throws IOException {
-        byte[] strBytes = str.getBytes(StandardCharsets.UTF_16LE);
+    private static byte[] buildStringArrayPayload(String val) throws IOException {
+        byte[] strBytes = val.getBytes(UTF16LE);
         ByteArrayOutputStream arr = new ByteArrayOutputStream();
-        arr.write(intToLe(FIELD_STRING));
-        arr.write(intToLe(strBytes.length));
-        arr.write(pad4(strBytes));
-        return wrapTlv(FIELD_ARRAY, arr.toByteArray());
+        arr.write(int32(SisField.FIELD_STRING));
+        arr.write(int32(strBytes.length));
+        arr.write(strBytes);
+        writeAlign4(arr, strBytes.length);
+        return arr.toByteArray();
     }
 
-    private static byte[] pad4(byte[] data) throws IOException {
-        int rem = data.length % 4;
-        if (rem == 0) return data;
-        int padLen = 4 - rem;
-        ByteArrayOutputStream out = new ByteArrayOutputStream(data.length + padLen);
-        out.write(data);
-        for (int i = 0; i < padLen; i++) out.write(0);
-        return out.toByteArray();
+    private static byte[] buildEmptyArrayPayload(int elemTag) {
+        return int32(elemTag);
     }
 
-    private static byte[] intToLe(int val) {
-        return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(val).array();
+    private static byte[] wrapAsCompressed(byte[] rawPayload) throws IOException {
+        byte[] compressedData = zlibCompress(rawPayload);
+        ByteBuffer header = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN);
+        header.putInt(1); // ECompressDeflate = 1
+        header.putLong(rawPayload.length);
+
+        ByteArrayOutputStream compPayload = new ByteArrayOutputStream();
+        compPayload.write(header.array());
+        compPayload.write(compressedData);
+
+        ByteArrayOutputStream tlvOut = new ByteArrayOutputStream();
+        writeTlvField(tlvOut, SisField.FIELD_COMPRESSED, compPayload.toByteArray());
+        return tlvOut.toByteArray();
     }
 
-    private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b & 0xFF));
+    private static byte[] zlibCompress(byte[] raw) {
+        Deflater def = new Deflater();
+        def.setInput(raw);
+        def.finish();
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(raw.length + 64);
+        byte[] buf = new byte[4096];
+        while (!def.finished()) {
+            int n = def.deflate(buf);
+            if (n > 0) bos.write(buf, 0, n);
+            else break;
         }
-        return sb.toString();
+        def.end();
+        return bos.toByteArray();
+    }
+
+    private static void writeTlvField(ByteArrayOutputStream bos, int tag, byte[] payload) throws IOException {
+        bos.write(int32(tag));
+        bos.write(int32(payload.length));
+        bos.write(payload);
+        writeAlign4(bos, payload.length);
+    }
+
+    private static byte[] int32(int v) {
+        return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(v).array();
+    }
+
+    private static void writeAlign4(ByteArrayOutputStream bos, int len) {
+        int mod = len % 4;
+        if (mod != 0) {
+            for (int i = 0; i < (4 - mod); i++) bos.write(0);
+        }
     }
 
     private static byte[] readAllBytes(File file) throws IOException {
         try (FileInputStream fis = new FileInputStream(file);
 		ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-            byte[] buf = new byte[8192];
+            byte[] buffer = new byte[8192];
             int n;
-            while ((n = fis.read(buf)) != -1) bos.write(buf, 0, n);
+            while ((n = fis.read(buffer)) != -1) bos.write(buffer, 0, n);
             return bos.toByteArray();
         }
     }

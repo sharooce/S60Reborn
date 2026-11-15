@@ -1,374 +1,286 @@
 package com.s60reborn.app.core;
 
 import android.content.Context;
-import android.util.Base64;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.PrivateKey;
-import java.security.PublicKey;
-import java.security.SecureRandom;
 import java.security.Signature;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.security.interfaces.DSAPrivateKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
+
 
 public class SisxSigner {
 
-	private static final int FIELD_CONTENTS = 12;                    // 0x0C
-    private static final int FIELD_SIGNATURE_CERTIFICATE_CHAIN = 27; // 0x1B
-    private static final int FIELD_SIGNATURE = 28;                   // 0x1C
-    private static final int FIELD_SIGNATURE_ALGORITHM = 29;         // 0x1D
-    private static final int FIELD_SIGNATURES = 30;                  // 0x1E
-    private static final int FIELD_CERTIFICATE_CHAIN = 31;           // 0x1F
-    private static final int FIELD_ARRAY = 33;                       // 0x21
-    private static final int FIELD_BLOB = 36;                        // 0x24
 	
+	public static void signSisFromAssets(Context context, File inputSis, File outputSis) throws Exception {
+        String[] assetFiles = context.getAssets().list("");
+        String foundCer = null;
+        String foundKey = null;
 
-    /**
-     * Menandatangani file .sis menggunakan file sertifikat (.cer) & private key (.key) custom.
-     */
-    public static void signSisFile(File unsignedSis, File certFile, File keyFile, File signedSisxOut) throws Exception {
-        byte[] sisBytes = readAllBytes(unsignedSis);
-        X509Certificate cert = loadCertFromFile(certFile);
-        PrivateKey privateKey = loadKeyFromFile(keyFile);
-        writeSignedSisx(sisBytes, cert, privateKey, signedSisxOut);
-    }
-
-    /**
-     * Default Self-Sign: Mencoba assets/sign.cer & sign.key; jika tidak ada/terenkripsi, otomatis generate RSA 1024-bit.
-     */
-    public static void signSisFromAssets(Context ctx, File unsignedSis, File signedSisxOut) throws Exception {
-        byte[] sisBytes = readAllBytes(unsignedSis);
-        try {
-            X509Certificate cert = loadCertFromAssets(ctx, "sign.cer");
-            PrivateKey privateKey = loadKeyFromAssets(ctx, "sign.key");
-            writeSignedSisx(sisBytes, cert, privateKey, signedSisxOut);
-        } catch (Exception e) {
-            KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
-            kpg.initialize(1024, new SecureRandom());
-            KeyPair kp = kpg.generateKeyPair();
-            X509Certificate selfCert = generateSelfSignedX509Certificate(kp);
-            writeSignedSisx(sisBytes, selfCert, kp.getPrivate(), signedSisxOut);
-        }
-    }
-
-    /**
-     * Menyisipkan SISSignatureCertificateChain ke DALAM FIELD_CONTENTS (36) dan memperbarui panjangnya.
-     */
-	private static void writeSignedSisx(byte[] sisBytes, X509Certificate cert, PrivateKey privateKey, File signedSisxOut) throws Exception {
-        ByteBuffer hdrCheck = ByteBuffer.wrap(sisBytes).order(ByteOrder.LITTLE_ENDIAN);
-        int contentsTag = hdrCheck.getInt(16);
-        int origContentsLen = hdrCheck.getInt(20);
-        if (contentsTag != FIELD_CONTENTS || 24 + origContentsLen > sisBytes.length) {
-            throw new IOException("File .sis tidak valid (bukan SISContents=12).");
-        }
-
-        byte[] origContentsBody = new byte[origContentsLen];
-        System.arraycopy(sisBytes, 24, origContentsBody, 0, origContentsLen);
-
-        // Ekstrak bagian Controller + Data saja (buang signature lama jika file sudah pernah di-sign)
-        ByteBuffer bodyBuf = ByteBuffer.wrap(origContentsBody).order(ByteOrder.LITTLE_ENDIAN);
-        int ctrlTag = bodyBuf.getInt(0);
-        int ctrlLen = bodyBuf.getInt(4);
-        int ctrlPaddedTotal = 8 + ((ctrlLen + 3) & ~3);
-
-        if (ctrlTag != 34 || ctrlPaddedTotal > origContentsLen) {
-            throw new IOException("Header FIELD_CONTROLLER (34) tidak valid di dalam SISContents.");
-        }
-
-        // Ambil hanya FIELD_CONTROLLER + FIELD_DATA (abaikan FIELD_ARRAY signature lama jika ada)
-        int cleanContentsLen = ctrlPaddedTotal;
-        if (ctrlPaddedTotal + 8 <= origContentsLen) {
-            int nextTag = bodyBuf.getInt(ctrlPaddedTotal);
-            int nextLen = bodyBuf.getInt(ctrlPaddedTotal + 4);
-            if (nextTag == 35) { // FIELD_DATA
-                cleanContentsLen = ctrlPaddedTotal + 8 + ((nextLen + 3) & ~3);
+        if (assetFiles != null) {
+            for (String name : assetFiles) {
+                String lower = name.toLowerCase();
+                if (lower.endsWith(".cer") || lower.endsWith(".crt") || lower.endsWith(".pem")) {
+                    foundCer = name;
+                } else if (lower.endsWith(".key")) {
+                    foundKey = name;
+                }
             }
         }
-        byte[] cleanContentsBody = new byte[cleanContentsLen];
-        System.arraycopy(origContentsBody, 0, cleanContentsBody, 0, cleanContentsLen);
 
-        // Tandatangani isi FIELD_CONTROLLER (mulai offset 8 sepanjang ctrlLen)
-        boolean isDsa = (privateKey instanceof DSAPrivateKey) || "DSA".equalsIgnoreCase(privateKey.getAlgorithm());
-        String sigAlgName = isDsa ? "SHA1withDSA" : "SHA1withRSA";
-        String oidStr = isDsa ? "1.2.840.10040.4.3" : "1.2.840.113549.1.1.5";
+        if (foundCer != null && foundKey != null) {
+            signSisFromAssets(context, inputSis, outputSis, foundCer, foundKey);
+        } else {
+            // Fallback otomatis jika di assets/ belum ada pasangan .cer & .key
+            signSisFile(inputSis, outputSis, null, null);
+        }
+    }
+    public static int calculateSymbianUidChecksum(int uid1, int uid2, int uid3) {
+        return SisField.calculateSymbianUidChecksum(uid1, uid2, uid3);
+    }
 
-        Signature signer = Signature.getInstance(sigAlgName);
+    /**
+     * Dipanggil MainActivity: Sign SISX memakai .cer & .key dari User Picker (atau auto-generate jika null)
+     */
+    public static void signSisFile(File inputSis, File outputSis, File cerFile, File keyFile) throws Exception {
+        byte[] cerBytes;
+        byte[] keyBytes;
+
+        if (cerFile != null && cerFile.exists() && keyFile != null && keyFile.exists()) {
+            cerBytes = readAllBytes(cerFile);
+            keyBytes = readAllBytes(keyFile);
+        } else {
+            KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+            kpg.initialize(2048);
+            KeyPair kp = kpg.generateKeyPair();
+            cerBytes = kp.getPublic().getEncoded();
+            keyBytes = kp.getPrivate().getEncoded();
+        }
+
+        applySymbianSignature(inputSis, outputSis, cerBytes, keyBytes);
+    }
+
+    /**
+     * Dipanggil MainActivity: Sign SISX memakai .cer & .key bawaan dari folder assets/ APK
+     */
+    public static void signSisFromAssets(Context context, File inputSis, File outputSis, String cerAssetName, String keyAssetName) throws Exception {
+        byte[] cerBytes = readAssetBytes(context, cerAssetName);
+        byte[] keyBytes = readAssetBytes(context, keyAssetName);
+        applySymbianSignature(inputSis, outputSis, cerBytes, keyBytes);
+    }
+
+    private static void applySymbianSignature(File inputSis, File outputSis, byte[] cerBytes, byte[] keyBytes) throws Exception {
+        byte[] sisBytes = readAllBytes(inputSis);
+        if (sisBytes.length < 24) throw new IOException("File SISX tidak valid untuk di-sign.");
+
+        ByteBuffer buf = ByteBuffer.wrap(sisBytes).order(ByteOrder.LITTLE_ENDIAN);
+        int uid1 = buf.getInt(0);
+
+        // Jika Legacy SIS (S60v1/v2), tidak memakai certificate chain SISX -> salin langsung
+        if (uid1 != SisField.SISX_UID1_MAGIC) {
+            try (FileOutputStream fos = new FileOutputStream(outputSis)) {
+                fos.write(sisBytes);
+            }
+            return;
+        }
+
+        // Bersihkan PEM header jika file .key berformat PEM ("-----BEGIN PRIVATE KEY-----")
+        byte[] pkcs8Key = decodePemIfNeeded(keyBytes);
+        PrivateKey privateKey = KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(pkcs8Key));
+
+        // Hitung tanda tangan digital RSA-SHA1 (standar Symbian OS 9.x) atas payload SISX
+        Signature signer = Signature.getInstance("SHA1withRSA");
         signer.initSign(privateKey);
-        signer.update(cleanContentsBody, 8, ctrlLen);
-        byte[] signatureBytes = signer.sign();
+        signer.update(sisBytes, 16, sisBytes.length - 16);
+        byte[] sigBytes = signer.sign();
 
-        // 1. SignatureAlgorithm (FIELD_SIGNATURE_ALGORITHM = 29 -> FIELD_STRING = 1)
-        byte[] oidBytes = oidStr.getBytes(StandardCharsets.UTF_16LE);
-        byte[] tlvAlg = wrapTlv(FIELD_SIGNATURE_ALGORITHM, wrapTlv(1, oidBytes));
+        // Bangun blok TLV Signature Certificate Chain (Tag 39) sesuai standar EKA2L1
+        byte[] certChainBlock = buildSignatureCertChainTlv(sigBytes, cerBytes);
 
-        // 2. Signature (FIELD_SIGNATURE = 28)
-        ByteArrayOutputStream sigItem = new ByteArrayOutputStream();
-        sigItem.write(tlvAlg);
-        sigItem.write(wrapTlv(FIELD_BLOB, signatureBytes));
-        byte[] tlvSig = wrapTlv(FIELD_SIGNATURE, sigItem.toByteArray());
+        // Sisipkan ke dalam SISContents (Tag 12) dan perbarui panjang FIELD_CONTENTS
+        int oldContentsLen = buf.getInt(20);
+        int newContentsLen = oldContentsLen + certChainBlock.length;
 
-        // 3. Array of Signatures (FIELD_SIGNATURES = 30)
-        ByteArrayOutputStream sigArr = new ByteArrayOutputStream();
-        sigArr.write(intToLe(FIELD_SIGNATURE));
-        sigArr.write(intToLe(tlvSig.length));
-        sigArr.write(pad4(tlvSig));
-        byte[] tlvSigArray = wrapTlv(FIELD_SIGNATURES, sigArr.toByteArray());
+        ByteArrayOutputStream out = new ByteArrayOutputStream(sisBytes.length + certChainBlock.length);
+        out.write(sisBytes, 0, 20);
+        out.write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(newContentsLen).array());
+        out.write(sisBytes, 24, sisBytes.length - 24);
+        out.write(certChainBlock);
 
-        // 4. CertificateChain (FIELD_CERTIFICATE_CHAIN = 31 -> FIELD_ARRAY = 33 -> FIELD_BLOB = 36)
-        byte[] certDer = cert.getEncoded();
-        ByteArrayOutputStream certArr = new ByteArrayOutputStream();
-        certArr.write(intToLe(FIELD_BLOB));
-        certArr.write(intToLe(certDer.length));
-        certArr.write(pad4(certDer));
-        byte[] tlvCertChain = wrapTlv(FIELD_CERTIFICATE_CHAIN, wrapTlv(FIELD_ARRAY, certArr.toByteArray()));
-
-        // 5. SISSignatureCertificateChain (FIELD_SIGNATURE_CERTIFICATE_CHAIN = 27)
-        ByteArrayOutputStream chainBody = new ByteArrayOutputStream();
-        chainBody.write(tlvSigArray);
-        chainBody.write(tlvCertChain);
-        byte[] tlvSignedChain = wrapTlv(FIELD_SIGNATURE_CERTIFICATE_CHAIN, chainBody.toByteArray());
-
-        // 6. Array of SignatureCertificateChain (FIELD_ARRAY = 33) di dalam SISContents
-        ByteArrayOutputStream chainArr = new ByteArrayOutputStream();
-        chainArr.write(intToLe(FIELD_SIGNATURE_CERTIFICATE_CHAIN));
-        chainArr.write(intToLe(tlvSignedChain.length));
-        chainArr.write(pad4(tlvSignedChain));
-        byte[] tlvChainArray = wrapTlv(FIELD_ARRAY, chainArr.toByteArray());
-
-        // 7. Gabungkan ke dalam body FIELD_CONTENTS (12)
-        ByteArrayOutputStream newContentsBody = new ByteArrayOutputStream();
-        newContentsBody.write(pad4(cleanContentsBody));
-        newContentsBody.write(tlvChainArray);
-        byte[] newTlvContents = wrapTlv(FIELD_CONTENTS, newContentsBody.toByteArray());
-
-        if (signedSisxOut.getParentFile() != null && !signedSisxOut.getParentFile().exists()) {
-            signedSisxOut.getParentFile().mkdirs();
-        }
-
-        FileOutputStream fos = new FileOutputStream(signedSisxOut);
-        try {
-            fos.write(sisBytes, 0, 16); // Header 16 byte UID asli
-            fos.write(newTlvContents);  // SISContents lengkap dengan SignatureChain di dalamnya
-        } finally {
-            fos.close();
-        }
-    }
-	
-
-    private static X509Certificate generateSelfSignedX509Certificate(KeyPair kp) throws Exception {
-        PublicKey pubKey = kp.getPublic();
-        PrivateKey privKey = kp.getPrivate();
-
-        byte[] serial = derInt(new BigInteger(64, new SecureRandom()).abs().toByteArray());
-
-        byte[] sigAlgSeq = new byte[] {
-            0x30, 0x0D,
-            0x06, 0x09, 0x2A, (byte) 0x86, 0x48, (byte) 0x86, (byte) 0xF7, 0x0D, 0x01, 0x01, 0x05,
-            0x05, 0x00
-        };
-
-        byte[] cnOid = new byte[] { 0x06, 0x03, 0x55, 0x04, 0x03 };
-        byte[] cnVal = derWrap((byte) 0x13, "S60Reborn SelfSigned".getBytes(StandardCharsets.US_ASCII));
-        byte[] rdnSeq = derWrap((byte) 0x30, concat(cnOid, cnVal));
-        byte[] rdnSet = derWrap((byte) 0x31, rdnSeq);
-        byte[] nameDn = derWrap((byte) 0x30, rdnSet);
-
-        byte[] notBefore = derWrap((byte) 0x17, "200101000000Z".getBytes(StandardCharsets.US_ASCII));
-        byte[] notAfter = derWrap((byte) 0x17, "450101000000Z".getBytes(StandardCharsets.US_ASCII));
-        byte[] validity = derWrap((byte) 0x30, concat(notBefore, notAfter));
-
-        byte[] spki = pubKey.getEncoded();
-
-        ByteArrayOutputStream tbsBody = new ByteArrayOutputStream();
-        tbsBody.write(serial);
-        tbsBody.write(sigAlgSeq);
-        tbsBody.write(nameDn);
-        tbsBody.write(validity);
-        tbsBody.write(nameDn);
-        tbsBody.write(spki);
-        byte[] tbsCert = derWrap((byte) 0x30, tbsBody.toByteArray());
-
-        Signature sig = Signature.getInstance("SHA1withRSA");
-        sig.initSign(privKey);
-        sig.update(tbsCert);
-        byte[] sigVal = sig.sign();
-
-        byte[] bitStrBody = new byte[sigVal.length + 1];
-        bitStrBody[0] = 0x00;
-        System.arraycopy(sigVal, 0, bitStrBody, 1, sigVal.length);
-        byte[] sigBitString = derWrap((byte) 0x03, bitStrBody);
-
-        ByteArrayOutputStream certOut = new ByteArrayOutputStream();
-        certOut.write(tbsCert);
-        certOut.write(sigAlgSeq);
-        certOut.write(sigBitString);
-        byte[] fullCertDer = derWrap((byte) 0x30, certOut.toByteArray());
-
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-        return (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(fullCertDer));
-    }
-
-    public static X509Certificate loadCertFromAssets(Context ctx, String assetName) throws Exception {
-        try (InputStream is = ctx.getAssets().open(assetName)) {
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            return (X509Certificate) cf.generateCertificate(is);
+        try (FileOutputStream fos = new FileOutputStream(outputSis)) {
+            fos.write(out.toByteArray());
         }
     }
 
-    public static X509Certificate loadCertFromFile(File cerFile) throws Exception {
-        try (FileInputStream fis = new FileInputStream(cerFile)) {
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            return (X509Certificate) cf.generateCertificate(fis);
+    private static byte[] buildSignatureCertChainTlv(byte[] sigBytes, byte[] cerBytes) throws IOException {
+        // FIELD_SIGNATURE_ALGORITHM (Tag 38) -> OID "1.2.840.113549.1.1.5" (sha1WithRSAEncryption)
+        byte[] oidUtf16 = "1.2.840.113549.1.1.5".getBytes(StandardCharsets.UTF_16LE);
+        ByteArrayOutputStream algBos = new ByteArrayOutputStream();
+        algBos.write(tlv(SisField.FIELD_STRING, oidUtf16.length));
+        algBos.write(oidUtf16);
+        byte[] algPayload = algBos.toByteArray();
+
+        // FIELD_SIGNATURE (Tag 36) = FIELD_SIGNATURE_ALGORITHM (38) + FIELD_BLOB (37)
+        ByteArrayOutputStream sigBos = new ByteArrayOutputStream();
+        sigBos.write(tlv(SisField.FIELD_SIGNATURE_ALGORITHM, algPayload.length));
+        sigBos.write(algPayload);
+        sigBos.write(tlv(SisField.FIELD_BLOB, sigBytes.length));
+        sigBos.write(sigBytes);
+        writeAlign4(sigBos, sigBytes.length);
+        byte[] sigPayload = sigBos.toByteArray();
+
+        // FIELD_CERTIFICATE_CHAIN (Tag 42) -> FIELD_BLOB (37)
+        ByteArrayOutputStream chainBos = new ByteArrayOutputStream();
+        chainBos.write(tlv(SisField.FIELD_BLOB, cerBytes.length));
+        chainBos.write(cerBytes);
+        writeAlign4(chainBos, cerBytes.length);
+        byte[] chainPayload = chainBos.toByteArray();
+
+        // FIELD_SIGNATURE_CERT_CHAIN (Tag 39)
+        ByteArrayOutputStream rootBos = new ByteArrayOutputStream();
+        rootBos.write(tlv(SisField.FIELD_SIGNATURE, sigPayload.length));
+        rootBos.write(sigPayload);
+        rootBos.write(tlv(SisField.FIELD_CERTIFICATE_CHAIN, chainPayload.length));
+        rootBos.write(chainPayload);
+        byte[] rootPayload = rootBos.toByteArray();
+
+        ByteArrayOutputStream finalTlv = new ByteArrayOutputStream();
+        finalTlv.write(tlv(SisField.FIELD_SIGNATURE_CERT_CHAIN, rootPayload.length));
+        finalTlv.write(rootPayload);
+        return finalTlv.toByteArray();
+    }
+
+    private static byte[] decodePemIfNeeded(byte[] raw) {
+        String text = new String(raw, StandardCharsets.US_ASCII).trim();
+        if (text.startsWith("-----BEGIN")) {
+            String base64 = text
+				.replaceAll("-----BEGIN [^-]+-----", "")
+				.replaceAll("-----END [^-]+-----", "")
+				.replaceAll("\\s+", "");
+            return Base64.getDecoder().decode(base64);
+        }
+        return raw;
+    }
+
+    private static byte[] tlv(int tag, int len) {
+        return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putInt(tag).putInt(len).array();
+    }
+
+    private static void writeAlign4(ByteArrayOutputStream bos, int len) {
+        int mod = len % 4;
+        if (mod != 0) {
+            for (int i = 0; i < (4 - mod); i++) bos.write(0);
         }
     }
 
-    public static PrivateKey loadKeyFromAssets(Context ctx, String assetName) throws Exception {
+    private static byte[] readAssetBytes(Context ctx, String assetName) throws IOException {
         try (InputStream is = ctx.getAssets().open(assetName);
 		ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
             byte[] buf = new byte[4096];
             int n;
             while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
-            return parsePrivateKeyBytes(bos.toByteArray());
+            return bos.toByteArray();
         }
-    }
-
-    public static PrivateKey loadKeyFromFile(File keyFile) throws Exception {
-        return parsePrivateKeyBytes(readAllBytes(keyFile));
-    }
-
-    private static PrivateKey parsePrivateKeyBytes(byte[] rawBytes) throws Exception {
-        String text = new String(rawBytes, StandardCharsets.UTF_8).trim();
-        if (text.contains("DEK-Info:") || text.contains("ENCRYPTED")) {
-            throw new IOException("Private key terenkripsi password.");
-        }
-
-        boolean isPkcs1Rsa = text.contains("-----BEGIN RSA PRIVATE KEY-----");
-        byte[] keyDer = rawBytes;
-
-        if (text.contains("-----BEGIN")) {
-            String base64 = text
-                .replaceAll("-----BEGIN [A-Z0-9 ]+-----", "")
-                .replaceAll("-----END [A-Z0-9 ]+-----", "")
-                .replaceAll("\\s+", "");
-            keyDer = Base64.decode(base64, Base64.DEFAULT);
-        }
-
-        if (isPkcs1Rsa) {
-            keyDer = wrapPkcs1ToPkcs8(keyDer);
-        }
-
-        try {
-            return KeyFactory.getInstance("RSA").generatePrivate(new PKCS8EncodedKeySpec(keyDer));
-        } catch (Exception e1) {
-            try {
-                return KeyFactory.getInstance("DSA").generatePrivate(new PKCS8EncodedKeySpec(keyDer));
-            } catch (Exception e2) {
-                return KeyFactory.getInstance("RSA").generatePrivate(
-                    new PKCS8EncodedKeySpec(wrapPkcs1ToPkcs8(keyDer)));
-            }
-        }
-    }
-
-    private static byte[] wrapPkcs1ToPkcs8(byte[] pkcs1Bytes) throws IOException {
-        byte[] algId = new byte[] {
-            0x30, 0x0D,
-            0x06, 0x09, 0x2A, (byte) 0x86, 0x48, (byte) 0x86, (byte) 0xF7, 0x0D, 0x01, 0x01, 0x01,
-            0x05, 0x00
-        };
-        byte[] version = new byte[] { 0x02, 0x01, 0x00 };
-        byte[] octetHeader = encodeDerLength((byte) 0x04, pkcs1Bytes.length);
-        int innerLen = version.length + algId.length + octetHeader.length + pkcs1Bytes.length;
-        byte[] seqHeader = encodeDerLength((byte) 0x30, innerLen);
-
-        ByteArrayOutputStream out = new ByteArrayOutputStream(seqHeader.length + innerLen);
-        out.write(seqHeader);
-        out.write(version);
-        out.write(algId);
-        out.write(octetHeader);
-        out.write(pkcs1Bytes);
-        return out.toByteArray();
-    }
-
-    private static byte[] derInt(byte[] val) throws IOException {
-        if (val.length == 0) val = new byte[] { 1 };
-        if ((val[0] & 0x80) != 0) {
-            byte[] padded = new byte[val.length + 1];
-            System.arraycopy(val, 0, padded, 1, val.length);
-            val = padded;
-        }
-        return derWrap((byte) 0x02, val);
-    }
-
-    private static byte[] derWrap(byte tag, byte[] content) throws IOException {
-        byte[] hdr = encodeDerLength(tag, content.length);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(hdr.length + content.length);
-        out.write(hdr);
-        out.write(content);
-        return out.toByteArray();
-    }
-
-    private static byte[] encodeDerLength(byte tag, int len) {
-        if (len < 128) {
-            return new byte[] { tag, (byte) len };
-        } else if (len <= 0xFF) {
-            return new byte[] { tag, (byte) 0x81, (byte) len };
-        } else {
-            return new byte[] { tag, (byte) 0x82, (byte) ((len >> 8) & 0xFF), (byte) (len & 0xFF) };
-        }
-    }
-
-    private static byte[] concat(byte[] a, byte[] b) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream(a.length + b.length);
-        out.write(a);
-        out.write(b);
-        return out.toByteArray();
-    }
-
-    private static byte[] wrapTlv(int type, byte[] data) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        out.write(intToLe(type));
-        out.write(intToLe(data.length));
-        out.write(pad4(data));
-        return out.toByteArray();
-    }
-
-    private static byte[] pad4(byte[] data) throws IOException {
-        int rem = data.length % 4;
-        if (rem == 0) return data;
-        int padLen = 4 - rem;
-        ByteArrayOutputStream out = new ByteArrayOutputStream(data.length + padLen);
-        out.write(data);
-        for (int i = 0; i < padLen; i++) out.write(0);
-        return out.toByteArray();
-    }
-
-    private static byte[] intToLe(int val) {
-        return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(val).array();
     }
 
     private static byte[] readAllBytes(File file) throws IOException {
         try (FileInputStream fis = new FileInputStream(file);
 		ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-            byte[] buf = new byte[8192];
+            byte[] buffer = new byte[8192];
             int n;
-            while ((n = fis.read(buf)) != -1) bos.write(buf, 0, n);
+            while ((n = fis.read(buffer)) != -1) bos.write(buffer, 0, n);
             return bos.toByteArray();
         }
     }
+	public static void showCertificateInfoDialog(android.content.Context ctx, java.io.File cerFile) {
+        try {
+            java.io.FileInputStream fis = new java.io.FileInputStream(cerFile);
+            java.security.cert.X509Certificate cert;
+            try {
+                java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
+                cert = (java.security.cert.X509Certificate) cf.generateCertificate(fis);
+            } finally {
+                fis.close();
+            }
+
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("dd MMM yyyy HH:mm", java.util.Locale.getDefault());
+            java.security.MessageDigest sha1 = java.security.MessageDigest.getInstance("SHA-1");
+            byte[] digest = sha1.digest(cert.getEncoded());
+            StringBuilder fp = new StringBuilder();
+            for (int i = 0; i < digest.length; i++) {
+                if (i > 0) fp.append(":");
+                fp.append(String.format("%02X", digest[i] & 0xFF));
+            }
+
+            String infoText =
+				"Subjek (Pemilik):\n" + cert.getSubjectX500Principal().getName() + "\n\n" +
+				"Penerbit (Issuer):\n" + cert.getIssuerX500Principal().getName() + "\n\n" +
+				"Masa Berlaku:\n" + sdf.format(cert.getNotBefore()) + " s/d " + sdf.format(cert.getNotAfter()) + "\n\n" +
+				"Nomor Seri:\n" + cert.getSerialNumber().toString(16).toUpperCase() + "\n\n" +
+				"Algoritma:\n" + cert.getSigAlgName() + "\n\n" +
+				"SHA-1 Fingerprint:\n" + fp.toString();
+
+            final android.app.Dialog dialog = new android.app.Dialog(ctx);
+            dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+            if (dialog.getWindow() != null) {
+                dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            }
+
+            float d = ctx.getResources().getDisplayMetrics().density;
+            android.widget.LinearLayout root = new android.widget.LinearLayout(ctx);
+            root.setOrientation(android.widget.LinearLayout.VERTICAL);
+            root.setBackgroundResource(com.s60reborn.app.R.drawable.dialog_glass_bg);
+            int pad = (int) (18 * d);
+            root.setPadding(pad, pad, pad, pad);
+
+            android.widget.TextView tvTitle = new android.widget.TextView(ctx);
+            tvTitle.setText("🔐 Detail Sertifikat (" + cerFile.getName() + ")");
+            tvTitle.setTextColor(0xFF00E676);
+            tvTitle.setTextSize(15f);
+            tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+            root.addView(tvTitle);
+
+            android.widget.ScrollView scroll = new android.widget.ScrollView(ctx);
+            android.widget.TextView tvBody = new android.widget.TextView(ctx);
+            tvBody.setText(infoText);
+            tvBody.setTextColor(0xFFE0F2F1);
+            tvBody.setTextSize(11.5f);
+            tvBody.setTypeface(android.graphics.Typeface.MONOSPACE);
+            tvBody.setPadding(0, (int)(10 * d), 0, (int)(12 * d));
+            scroll.addView(tvBody);
+            root.addView(scroll, new android.widget.LinearLayout.LayoutParams(
+							 android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (int) (260 * d)));
+
+            android.widget.Button btnClose = new android.widget.Button(ctx);
+            btnClose.setText("TUTUP");
+            btnClose.setTextColor(0xFF121417);
+            btnClose.setBackgroundColor(0xFF00E676);
+            btnClose.setTypeface(null, android.graphics.Typeface.BOLD);
+            btnClose.setOnClickListener(new android.view.View.OnClickListener() {
+					@Override
+					public void onClick(android.view.View v) {
+						dialog.dismiss();
+					}
+				});
+            root.addView(btnClose);
+
+            dialog.setContentView(root);
+            dialog.show();
+        } catch (Exception e) {
+            android.widget.Toast.makeText(ctx, "Gagal membaca sertifikat: " + e.getMessage(), android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+	
 }
 

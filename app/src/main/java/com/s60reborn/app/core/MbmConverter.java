@@ -105,7 +105,7 @@ public class MbmConverter {
         }
 
         // Susun Header 20 Byte
-        int uidChecksum = SisxPacker.calculateSymbianUidChecksum(MBM_UID1, MBM_UID2, 0);
+        int uidChecksum = SisField.calculateSymbianUidChecksum(MBM_UID1, MBM_UID2, 0);
         ByteBuffer header = ByteBuffer.allocate(20).order(ByteOrder.LITTLE_ENDIAN);
         header.putInt(MBM_UID1);
         header.putInt(MBM_UID2);
@@ -200,6 +200,19 @@ public class MbmConverter {
                         int r = ((val >> 11) & 0x1F) * 255 / 31;
                         int g = ((val >> 5) & 0x3F) * 255 / 63;
                         int bl = (val & 0x1F) * 255 / 31;
+                        pixels[y * width + x] = Color.rgb(r, g, bl);
+                    }
+                }
+            }
+        }else if (bitsPerPixel == 32) {
+            int stride = width * 4;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int idx = y * stride + x * 4;
+                    if (idx + 3 < rawPixels.length) {
+                        int bl = rawPixels[idx] & 0xFF;
+                        int g = rawPixels[idx + 1] & 0xFF;
+                        int r = rawPixels[idx + 2] & 0xFF;
                         pixels[y * width + x] = Color.rgb(r, g, bl);
                     }
                 }

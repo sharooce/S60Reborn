@@ -14,11 +14,11 @@ public class SisPackageInfo {
     public int majorVersion = 1;
     public int minorVersion = 0;
     public int buildVersion = 0;
-    public int installType = 0; // 0 = SA (Standard Application)
+    public int installType = 0; 
 	public String formatLabel = "SISX (S60v3/v5/Belle)";
     public boolean isSigned = false;
     public String signerInfo = "Unsigned";
-	public String installNoteText = ""; // Pesan teks pop-up saat instalasi (FT, TC)
+	public String installNote = ""; 
 	
 
     public List<SisFileEntry> files = new ArrayList<>();

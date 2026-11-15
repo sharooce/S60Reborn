@@ -1,0 +1,296 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_glass_dark_card"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Header -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Advanced SIS / SISX Studio"
+        android:textColor="#E3F2FD"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:layout_marginBottom="12dp"
+        android:text="Generasi OS, InstallType, E32 Capabilities, Checkbox Opsi &amp; Sertifikat"
+        android:textColor="#90CAF9"
+        android:textSize="11sp" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="360dp"
+        android:fadeScrollbars="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- SECTION 1: GENERASI FORMAT & TIPE PAKET -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_glass_dark_section"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="1. Generasi Format &amp; Tipe Paket"
+                    android:textColor="#64B5F6"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <Spinner
+                    android:id="@+id/spPackageFormat"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="6dp" />
+
+                <Spinner
+                    android:id="@+id/spInstallType"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="6dp" />
+
+                <Spinner
+                    android:id="@+id/spPlatformTarget"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="6dp" />
+
+                <CheckBox
+                    android:id="@+id/cbFlagShutdownApps"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="ShutdownApps (Tutup app aktif saat upgrade)"
+                    android:textColor="#ECEFF1"
+                    android:textSize="12sp" />
+
+                <CheckBox
+                    android:id="@+id/cbFlagRomUpgrade"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ROMUpgrade (Izinkan timpa komponen ROM Z:\)"
+                    android:textColor="#ECEFF1"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- SECTION 2: E32 EXECUTABLE PERMISSIONS (AUTO HIDE JIKA V1/V2) -->
+            <LinearLayout
+                android:id="@+id/sectionExeCapabilities"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_glass_dark_section"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="2. Permission Executable (.exe / .dll)"
+                    android:textColor="#64B5F6"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvExeCapSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Capabilities: Default dari file .exe asli"
+                    android:textColor="#B0BEC5"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/btnEditExeCapabilities"
+                    android:layout_width="match_parent"
+                    android:layout_height="38dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_glass_dark_section"
+                    android:text="Atur 20 Capabilities, SID &amp; Heap RAM (.exe)"
+                    android:textAllCaps="false"
+                    android:textColor="#81D4FA"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- SECTION 3: CHECKBOX OPSI & KONDISI IF -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_glass_dark_section"
+                android:orientation="vertical"
+                android:padding="12dp"
+                android:layout_marginBottom="10dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="3. Checkbox Pilihan &amp; Kondisi Pertengahan Install"
+                    android:textColor="#64B5F6"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvOptionsSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="0 Checkbox Opsi | 0 Kondisi IF | 0 Sub-SIS"
+                    android:textColor="#B0BEC5"
+                    android:textSize="11sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnAddInstallCheckbox"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/bg_glass_dark_section"
+                        android:text="+ Checkbox Opsi"
+                        android:textAllCaps="false"
+                        android:textColor="#A5D6A7"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/btnAddConditionIf"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_glass_dark_section"
+                        android:text="+ Kondisi IF"
+                        android:textAllCaps="false"
+                        android:textColor="#FFE082"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btnAddEmbeddedSis"
+                    android:layout_width="match_parent"
+                    android:layout_height="38dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/bg_glass_dark_section"
+                    android:text="+ Sisipkan Sub-Paket (.sis) di Dalam Installer"
+                    android:textAllCaps="false"
+                    android:textColor="#CE93D8"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- SECTION 4: CERTIFICATE & SIGNING (AUTO HIDE JIKA V1/V2) -->
+            <LinearLayout
+                android:id="@+id/sectionCertificateSigning"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_glass_dark_section"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="4. Sertifikat &amp; Tanda Tangan Digital"
+                    android:textColor="#64B5F6"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <Spinner
+                    android:id="@+id/spSignMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="6dp" />
+
+                <TextView
+                    android:id="@+id/tvCertStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Mode: Self-Signed RSA 1024-bit Otomatis"
+                    android:textColor="#B0BEC5"
+                    android:textSize="11sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btnPickCustomCer"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/bg_glass_dark_section"
+                        android:text="Pilih .CER"
+                        android:textAllCaps="false"
+                        android:textColor="#80CBC4"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/btnPickCustomKey"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:background="@drawable/bg_glass_dark_section"
+                        android:text="Pilih .KEY"
+                        android:textAllCaps="false"
+                        android:textColor="#80CBC4"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Footer Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="end"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnCancelAdv"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:background="@android:color/transparent"
+            android:text="Batal"
+            android:textAllCaps="false"
+            android:textColor="#90A4AE" />
+
+        <Button
+            android:id="@+id/btnSaveAdv"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_glass_dark_section"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="Simpan Pengaturan"
+            android:textAllCaps="false"
+            android:textColor="#64B5F6"
+            android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>
+

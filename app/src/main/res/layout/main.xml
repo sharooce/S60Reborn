@@ -292,22 +292,18 @@
                     </LinearLayout>
 
                     <!-- Container dinamis item file -->
-                    <LinearLayout
-                        android:id="@+id/llFileItemsContainer"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="Belum ada file. Pilih paket .sis/.sisx atau klik + Tambah File."
-                            android:textColor="#546E7A"
-                            android:textSize="12sp"
-                            android:paddingTop="8dp"
-                            android:paddingBottom="8dp" />
-                    </LinearLayout>
-                </LinearLayout>
+                    <ListView
+						android:id="@+id/lvFileItems"
+						android:layout_width="match_parent"
+						android:layout_height="240dp"
+						android:background="@android:color/transparent"
+						android:cacheColorHint="@android:color/transparent"
+						android:divider="@android:color/transparent"
+						android:dividerHeight="6dp"
+						android:listSelector="@android:color/transparent"
+						android:nestedScrollingEnabled="true"
+						android:scrollbars="vertical" />
+				</LinearLayout>
 
             </LinearLayout>
         </ScrollView>
