@@ -17,7 +17,8 @@
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:layout_marginBottom="10dp">
-
+			
+			
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
@@ -40,6 +41,8 @@
                 android:textColor="#90A4AE"
                 android:textSize="11sp" />
         </LinearLayout>
+		
+		
 
         <!-- Scrollable Form Editor Modern -->
         <ScrollView
@@ -62,6 +65,7 @@
                     android:background="@drawable/card_dark"
                     android:padding="12dp"
                     android:layout_marginBottom="10dp">
+					
 
                     <TextView
                         android:layout_width="wrap_content"
@@ -72,14 +76,41 @@
                         android:textStyle="bold"
                         android:layout_marginBottom="8dp" />
 
-                    <!-- Nama Aplikasi -->
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Nama Aplikasi"
-                        android:textColor="#B0BEC5"
-                        android:textSize="11sp"
-                        android:layout_marginBottom="3dp" />
+					<RelativeLayout
+						android:layout_width="fill_parent"
+						android:layout_height="wrap_content"
+						android:background="@drawable/card_dark"
+						android:padding="12dp"
+						android:layout_marginBottom="10dp">
+
+						<!-- Nama Aplikasi di sebelah KIRI -->
+						<TextView
+							android:layout_width="wrap_content"
+							android:layout_height="wrap_content"
+							android:text="Nama Aplikasi"
+							android:layout_alignParentLeft="true"
+							android:layout_alignParentStart="true"
+							android:layout_centerVertical="true"
+							android:textColor="#B0BEC5"
+							android:textSize="11sp" />
+
+						<!-- Tombol Hapus di sebelah KANAN -->
+						<Button
+							android:id="@+id/btnDeleteCache"
+							android:layout_width="wrap_content"
+							android:layout_height="28dp"
+							android:layout_alignParentRight="true"
+							android:layout_alignParentEnd="true"
+							android:layout_centerVertical="true"
+							android:background="@drawable/fab_mini_bg"
+							android:text="Hapus Proyek"
+							android:textColor="#4FC3F7"
+							android:textSize="12sp"
+							android:paddingLeft="10dp"
+							android:paddingRight="10dp" />
+
+					</RelativeLayout>
+					
 
                     <EditText
                         android:id="@+id/etAppName"
@@ -394,6 +425,7 @@
                 android:textColor="#FFB74D"
                 android:textStyle="bold"
                 android:textSize="12sp" />
+			
 
             <Button
                 android:id="@+id/btnSettings"

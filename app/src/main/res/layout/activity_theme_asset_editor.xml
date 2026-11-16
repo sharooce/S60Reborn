@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0D1117"
+    android:padding="12dp">
+
+    <!-- Header & Info File Aktif -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/tvEditorTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentLeft="true"
+            android:layout_centerVertical="true"
+            android:text="Theme Asset Manager"
+            android:textColor="#4FC3F7"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvCacheBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentRight="true"
+            android:layout_centerVertical="true"
+            android:background="@drawable/card_dark"
+            android:paddingLeft="8dp"
+            android:paddingRight="8dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:text="Cache: Aktif"
+            android:textColor="#00E676"
+            android:textSize="11sp" />
+    </RelativeLayout>
+
+    <!-- 3 Tab Mode Editor: MIF | MBM | SKN -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:orientation="horizontal"
+        android:background="@drawable/card_dark"
+        android:padding="2dp"
+        android:layout_marginBottom="8dp">
+
+        <Button
+            android:id="@+id/btnModeMif"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="Edit MIF"
+            android:textSize="12sp"
+            android:textColor="#0D1117"
+            android:background="#4FC3F7" />
+
+        <Button
+            android:id="@+id/btnModeMbm"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="Edit MBM"
+            android:textSize="12sp"
+            android:textColor="#B0BEC5"
+            android:background="@android:color/transparent" />
+
+        <Button
+            android:id="@+id/btnModeSkn"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:text="Edit SKN"
+            android:textSize="12sp"
+            android:textColor="#B0BEC5"
+            android:background="@android:color/transparent" />
+    </LinearLayout>
+
+    <!-- Area Grid Ikon (1 Layar per Halaman, Support Swipe Kiri/Kanan) -->
+    <GridView
+        android:id="@+id/gvAssetGrid"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:numColumns="3"
+        android:horizontalSpacing="8dp"
+        android:verticalSpacing="8dp"
+        android:stretchMode="columnWidth"
+        android:gravity="center"
+        android:listSelector="@android:color/transparent" />
+
+    <!-- Navigasi Halaman (Prev / Info Halaman / Next) -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="38dp"
+        android:background="@drawable/card_dark"
+        android:paddingLeft="10dp"
+        android:paddingRight="10dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp">
+
+        <Button
+            android:id="@+id/btnPrevPage"
+            android:layout_width="70dp"
+            android:layout_height="28dp"
+            android:layout_alignParentLeft="true"
+            android:layout_centerVertical="true"
+            android:background="@drawable/fab_mini_bg"
+            android:text="&lt; Prev"
+            android:textColor="#4FC3F7"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/tvPageIndicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:text="Halaman 1 / 1 (0 Item)"
+            android:textColor="#ECEFF1"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnNextPage"
+            android:layout_width="70dp"
+            android:layout_height="28dp"
+            android:layout_alignParentRight="true"
+            android:layout_centerVertical="true"
+            android:background="@drawable/fab_mini_bg"
+            android:text="Next &gt;"
+            android:textColor="#4FC3F7"
+            android:textSize="11sp" />
+    </RelativeLayout>
+
+    <!-- Tombol Aksi Bawah: Batal (Clean Cache) | Tambah Aset | Repack Semua -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnCancelClean"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginRight="6dp"
+            android:background="@drawable/card_dark"
+            android:text="Batal &amp; Clean"
+            android:textColor="#EF5350"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnAddNewAsset"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginRight="6dp"
+            android:background="@drawable/card_dark"
+            android:text="+ Tambah UID"
+            android:textColor="#4FC3F7"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnRepackAll"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1.2"
+            android:background="#00E676"
+            android:text="Repack File"
+            android:textColor="#0D1117"
+            android:textStyle="bold"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+</LinearLayout>
+

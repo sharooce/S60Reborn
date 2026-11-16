@@ -25,6 +25,7 @@ import com.s60reborn.app.model.SisProjectConfig;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import com.s60reborn.app.*;
 
 public class SisAdvancedSettingsDialog {
 
@@ -57,7 +58,7 @@ public class SisAdvancedSettingsDialog {
 
         // 0. Format Paket: SISX v3/v5/Belle vs SIS Legacy v1/v2
         String[] formats = {
-            "SISX Modern (S60v3 / S60v5 / Belle - Signed)",
+            "SISX (S60v3 / S60v5 / Belle - Signed)",
             "SIS Legacy (S60v1 / S60v2 - EPOC Tanpa Sertifikat)"
         };
         spPackageFormat.setAdapter(new ArrayAdapter<String>(
@@ -181,9 +182,15 @@ public class SisAdvancedSettingsDialog {
 					dialog.dismiss();
 				}
 			});
+		root.setOnClickListener(new View.OnClickListener(){
+			public void onClick(View v){
+				
+			}
+		});
 
         dialog.show();
     }
+	
 
     private static void showExeCapabilityEditor(final Context ctx, final File projectDir, List<SisFileEntry> files) {
         final List<File> exeFiles = new ArrayList<File>();

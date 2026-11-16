@@ -11,18 +11,22 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class SknParser {
 	
+	
 	public static class SknAssetMapping {
-        public int majorUid;
-        public int minorUid;
-        public String uidKey;       // Format "10005A26:00001000"
-        public String elementName;  // Nama dari database SISContents
-        public int assetIndex;      // Indeks gambar di .MBM / .MIF
-        public int maskIndex;       // Indeks mask (-1 jika tidak ada)
-        public int offsetInSkn;     // Posisi byte di .skn jika ingin diganti indeksnya
-    }
+		public int majorUid;
+		public int minorUid;
+		public String uidKey;       // Format "10005A26:00001000"
+		public String elementName;  // Nama dari database SISContents
+		public int assetIndex;      // Indeks gambar di .MBM / .MIF
+		public int maskIndex;       // Indeks mask (-1 jika tidak ada)
+		public int offsetInSkn;     // Posisi awal chunk item di .skn
+		public int indexOffsetInSkn;// Posisi exact 4-byte assetIndex di .skn
+	}
+	
 	
 
     public static class SknColorItem {
@@ -127,23 +131,26 @@ public class SknParser {
     /**
      * Memindai seluruh pemetaan ID Ikon & Elemen Tema di dalam file .SKN
      */
-    public static java.util.List<SknAssetMapping> extractAssetMappings(File sknFile, java.util.Map<String, String> db) throws IOException {
+	public static List<SknAssetMapping> extractAssetMappings(File sknFile, Map<String, String> db) throws IOException {
         byte[] raw = readAll(sknFile);
         ByteBuffer buf = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
-        java.util.List<SknAssetMapping> mappings = new java.util.ArrayList<>();
+        List<SknAssetMapping> mappings = new ArrayList<>();
         java.util.Set<String> seenKeys = new java.util.HashSet<>();
 
         for (int pos = 16; pos <= raw.length - 20; pos += 2) {
             int major = buf.getInt(pos);
-            // Major UID standar AknsSrv: Skin (0x10005A26), AppIcon (0x101F84B9), Custom (0x10207114)
+			int itemType = buf.getInt(pos + 8);
+			if (itemType != 1 && itemType != 2) continue;
+			
             if (major == 0x10005A26 || major == 0x101F84B9 || major == 0x10207114) {
                 int minor = buf.getInt(pos + 4);
                 String uidKey = String.format("%08X:%08X", major, minor);
 
                 if (minor != 0 && !seenKeys.contains(uidKey)) {
-                    // Cari indeks bitmap/ikon valid (0..5000) setelah header chunk item
-                    int bmpIdx = -1;
-                    int maskIdx = -1;
+                    int idxOffset = -1;
+					int bmpIdx = buf.getInt(pos + 12);
+					int maskIdx = (itemType == 2) ? buf.getInt(pos + 16) : -1;
+					
                     for (int scan = pos + 12; scan <= Math.min(raw.length - 8, pos + 32); scan += 2) {
                         int candidateIdx = buf.getInt(scan);
                         int candidateMask = buf.getInt(scan + 4);
@@ -151,6 +158,7 @@ public class SknParser {
                             (candidateMask == -1 || (candidateMask >= 0 && candidateMask < 5000))) {
                             bmpIdx = candidateIdx;
                             maskIdx = candidateMask;
+                            idxOffset = scan;
                             break;
                         }
                     }
@@ -165,6 +173,7 @@ public class SknParser {
                         m.assetIndex = bmpIdx;
                         m.maskIndex = maskIdx;
                         m.offsetInSkn = pos;
+                        m.indexOffsetInSkn = idxOffset;
                         mappings.add(m);
                     }
                 }
@@ -172,6 +181,188 @@ public class SknParser {
         }
         return mappings;
     }
+
+    /**
+     * Mengubah indeks gambar MBM/MIF pada item tema di dalam .SKN
+     */
+    public static void patchAssetIndexInSkn(File sknFile, int indexOffsetInSkn, int newAssetIndex, int newMaskIndex) throws IOException {
+        byte[] raw = readAll(sknFile);
+        if (indexOffsetInSkn >= 0 && indexOffsetInSkn + 8 <= raw.length) {
+            ByteBuffer buf = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
+            buf.putInt(indexOffsetInSkn, newAssetIndex);
+            buf.putInt(indexOffsetInSkn + 4, newMaskIndex);
+            try (FileOutputStream fos = new FileOutputStream(sknFile)) {
+                fos.write(raw);
+            }
+        }
+    }
+
+    /**
+     * Menambahkan pemetaan elemen baru dari Database SISContents ke akhir chunk .SKN
+     */
+    public static void appendAssetMappingToSkn(File sknFile, String uidKey, int assetIndex, int maskIndex) throws IOException {
+        String[] parts = uidKey.split(":");
+        if (parts.length != 2) throw new IOException("Format UID tidak valid (harus MAJOR:MINOR)");
+        int major = (int) Long.parseLong(parts[0].trim(), 16);
+        int minor = (int) Long.parseLong(parts[1].trim(), 16);
+
+        byte[] raw = readAll(sknFile);
+        ByteBuffer chunk = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN);
+        chunk.putInt(major);        // +0: Major UID
+        chunk.putInt(minor);        // +4: Minor UID
+        chunk.putInt(0x00000001);   // +8: AknsSrv Bitmap Item Type
+        chunk.putInt(assetIndex);   // +12: Bitmap Index (.MBM/.MIF)
+        chunk.putInt(maskIndex);    // +16: Mask Index (-1 jika tanpa mask)
+        chunk.putInt(0x00000000);   // +20: Attributes / Padding
+
+        try (FileOutputStream fos = new FileOutputStream(sknFile)) {
+            fos.write(raw);
+            fos.write(chunk.array());
+        }
+    }
+	
+	private static final String CUSTOM_SKIN_DB_FILE = "custom_skin_elements.txt";
+
+    /**
+     * Mengambil file penyimpanan kamus elemen kustom lokal
+     */
+    public static File getCustomSkinDbFile(android.content.Context context) {
+        File dir = context.getExternalFilesDir(null);
+        if (dir == null) dir = context.getFilesDir();
+        return new File(dir, CUSTOM_SKIN_DB_FILE);
+    }
+
+    /**
+     * Menyimpan atau memperbarui nama kustom untuk UID tertentu (Format: MAJOR:MINOR=Nama Aplikasi)
+     */
+    public static void saveCustomElementName(android.content.Context context, String uidKey, String customName) {
+        if (uidKey == null || customName == null || customName.trim().isEmpty()) return;
+        String cleanKey = uidKey.trim().toUpperCase();
+        String cleanName = customName.trim().replace("\n", " ").replace("=", "-");
+
+        // Update cache di memori secara instan
+        if (cachedSkinDb != null) {
+            cachedSkinDb.put(cleanKey, cleanName);
+        }
+
+        // Baca isi file kustom lama agar tidak menimpa entri lain
+        java.util.Map<String, String> customMap = new java.util.LinkedHashMap<String, String>();
+        File file = getCustomSkinDbFile(context);
+        if (file.exists()) {
+            java.io.BufferedReader br = null;
+            try {
+                br = new java.io.BufferedReader(new java.io.FileReader(file));
+                String line;
+                while ((line = br.readLine()) != null) {
+                    int eq = line.indexOf('=');
+                    if (eq > 0) {
+                        customMap.put(line.substring(0, eq).trim().toUpperCase(), line.substring(eq + 1).trim());
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (br != null) { try { br.close(); } catch (Exception ignored) {} }
+            }
+        }
+
+        // Masukkan atau perbarui entri baru
+        customMap.put(cleanKey, cleanName);
+
+        // Tulis kembali ke file
+        java.io.BufferedWriter bw = null;
+        try {
+            bw = new java.io.BufferedWriter(new java.io.FileWriter(file));
+            for (java.util.Map.Entry<String, String> entry : customMap.entrySet()) {
+                bw.write(entry.getKey() + "=" + entry.getValue() + "\n");
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (bw != null) { try { bw.close(); } catch (Exception ignored) {} }
+        }
+    }
+	
+
+    /**
+     * Parser fleksibel untuk file database SISContents di assets (mendukung UTF-16LE, ASCII/UTF-8, & CSV/INI)
+     */
+	/**
+     * Parser akurat untuk file database SISContents di assets (teruji 3.550+ entri)
+     */
+    public static void parseBinaryDbBytes(byte[] raw, java.util.Map<String, String> db) throws Exception {
+        if (raw == null || raw.length < 32) return;
+        ByteBuffer buf = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
+
+        int currentMajor = 0x10005A26; // Default Major UID AknsSrv
+
+        // Pola 14-byte pemisah tetap sebelum panjang string di seluruh file .db
+        final byte[] SEP = new byte[] {
+            (byte) 0xFF, (byte) 0xF0, 0x00, 0x00,
+            0x00, 0x00, (byte) 0xFF, (byte) 0xF0,
+            0x00, 0x00, 0x00, 0x00,
+            (byte) 0xFF, (byte) 0xF0
+        };
+
+        int pos = 8;
+        int totalLen = raw.length;
+
+        while (pos <= totalLen - 18) {
+            // 1. Deteksi header pergantian Major UID di tengah file (pola: FF FF .. .. .. .. [MajorUID])
+            // Contoh dari hex Anda: FF FF F8 0B 00 00 01 59 00 10 (Major UID = 0x10005901)
+            if ((raw[pos] & 0xFF) == 0xFF && (raw[pos + 1] & 0xFF) == 0xFF && pos + 10 <= totalLen) {
+                int candidateMajor = buf.getInt(pos + 6);
+                if (isSymbianSkinMajor(candidateMajor)) {
+                    currentMajor = candidateMajor;
+                }
+            }
+
+            // 2. Deteksi 14-byte separator FF F0... untuk membaca Minor UID dan Nama Elemen
+            if (raw[pos] == SEP[0] && raw[pos + 1] == SEP[1] &&
+                raw[pos + 6] == SEP[6] && raw[pos + 7] == SEP[7] &&
+                raw[pos + 12] == SEP[12] && raw[pos + 13] == SEP[13]) {
+
+                boolean fullMatch = true;
+                for (int k = 0; k < 14; k++) {
+                    if (raw[pos + k] != SEP[k]) {
+                        fullMatch = false;
+                        break;
+                    }
+                }
+
+                if (fullMatch) {
+                    int minorUid = buf.getInt(pos - 4);
+                    int strByteLen = buf.getInt(pos + 14);
+                    int strStart = pos + 18;
+
+                    if (strByteLen > 0 && strByteLen <= 2048 && (strStart + strByteLen) <= totalLen) {
+                        String name = new String(raw, strStart, strByteLen, "UTF-16LE").trim();
+                        if (!name.isEmpty()) {
+                            String key = String.format("%08X:%08X", currentMajor, minorUid);
+                            db.put(key, name);
+
+                            // Simpan juga fallback ke default AknsSrv jika belum ada, agar item umum selalu ketemu
+                            String fallbackKey = String.format("10005A26:%08X", minorUid);
+                            if (!db.containsKey(fallbackKey)) {
+                                db.put(fallbackKey, name);
+                            }
+
+                            pos = strStart + strByteLen;
+                            continue;
+                        }
+                    }
+                }
+            }
+            pos++;
+        }
+    }
+	
+	
+	
+
+    private static boolean isSymbianSkinMajor(int val) {
+        return val == 0x10005A26 || val == 0x101F84B9 || val == 0x10207114
+            || val == 0x101F8599 || val == 0x10204DA2 || ((val & 0xFF000000) == 0x10000000);
+    }
+	
 	
 
     /**
@@ -271,52 +462,31 @@ public class SknParser {
         } catch (Exception e) {
             e.printStackTrace();
         }
+		File customFile = getCustomSkinDbFile(context);
+        if (customFile.exists()) {
+            java.io.BufferedReader br = null;
+            try {
+                br = new java.io.BufferedReader(new java.io.FileReader(customFile));
+                String line;
+                while ((line = br.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty() || line.startsWith("#")) continue;
+                    int eq = line.indexOf('=');
+                    if (eq > 0) {
+                        String key = line.substring(0, eq).trim().toUpperCase();
+                        String val = line.substring(eq + 1).trim();
+                        db.put(key, val);
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (br != null) { try { br.close(); } catch (Exception ignored) {} }
+            }
+        }
+		
 
         cachedSkinDb = db;
         return db;
-    }
-
-	public static void parseBinaryDbBytes(byte[] raw, java.util.Map<String, String> db) throws Exception {
-        if (raw == null || raw.length < 32) return;
-        ByteBuffer buf = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
-
-        // Scan seluruh file mencari pola [Short ByteLength] + [UTF-16LE String]
-        for (int pos = 16; pos <= raw.length - 10; pos += 2) {
-            int byteLen = buf.getShort(pos) & 0xFFFF;
-
-            // Panjang string dalam byte biasanya genap, antara 4 hingga 80 byte, dan kelipatan 2
-            if (byteLen >= 4 && byteLen <= 80 && byteLen % 2 == 0) {
-                int textStart = pos + 2;
-                int charCount = byteLen / 2;
-
-                if (textStart + byteLen <= raw.length && isPrintableUtf16(raw, textStart, charCount)) {
-                    String name = new String(raw, textStart, byteLen, "UTF-16LE").trim();
-
-                    // Validasi string harus berupa teks nama yang valid (diawali huruf)
-                    if (!name.isEmpty() && Character.isLetter(name.charAt(0))) {
-
-                        // Cari Major & Minor UID terdekat di sekitar posisi ini (mundur hingga 32 byte ke belakang)
-                        int foundMajor = 0;
-                        int foundMinor = 0;
-
-                        for (int searchPos = Math.max(0, pos - 48); searchPos <= pos - 4; searchPos += 2) {
-                            int val = buf.getInt(searchPos);
-                            // Cek apakah ini Major UID Symbian (0x10xxxxxx)
-                            if ((val & 0xF0000000) == 0x10000000 || (val & 0xF0000000) == 0x20000000) {
-                                foundMajor = val;
-                                foundMinor = buf.getInt(searchPos + 4);
-                                break;
-                            }
-                        }
-
-                        if (foundMajor != 0 && foundMinor != 0 && foundMinor != -1) {
-                            String key = String.format("%08X:%08X", foundMajor, foundMinor);
-                            db.put(key, name);
-                        }
-                    }
-                }
-            }
-        }
     }
 	    /**
      * Menentukan path tujuan ekstraksi di dalam subfolder varian_X

@@ -458,6 +458,14 @@ public class NokiaThemePreviewView extends View {
 				0xFFFDD835, 0xFF00ACC1, 0xFFD81B60, 0xFF039BE5,
 				0xFFFB8C00, 0xFF8E24AA, 0xFFE53935, 0xFF1E88E5
             };
+			
+			String[] menuUids = {
+				"101F84B9:10005901", "101F84B9:10005902", "101F84B9:10005903", "101F84B9:102072C4",
+				"101F84B9:100058C5", "101F84B9:10008D39", "101F84B9:101F8599", "101F84B9:2001A93D",
+				"101F84B9:101F4CD5", "101F84B9:100058CD", "101F84B9:100058EC", "101F84B9:10005234"
+			};
+
+			
 
             float gridTop = screenRect.top + statusH + 4f;
             float gridH = screenRect.height() - statusH - 28f;
@@ -485,9 +493,10 @@ public class NokiaThemePreviewView extends View {
 
                 // Cek apakah ada Bitmap asli dari .MBM untuk slot ikon ke-idx ini
                 // (Indeks 0 & 1 biasanya Wallpaper & MenuBG, jadi ikon dimulai dari indeks 2 dst.)
-                int bmpIndex = idx + 2;
-                Bitmap realIcon = (bmpIndex < themeIconBitmaps.size()) ? themeIconBitmaps.get(bmpIndex) : null;
-
+                Integer mappedIdx = uidToAssetIdx.get(menuUids[idx]);
+				int bmpIndex = (mappedIdx != null) ? mappedIdx : (idx + 2);
+				Bitmap realIcon = (bmpIndex >= 0 && bmpIndex < themeIconBitmaps.size()) ? themeIconBitmaps.get(bmpIndex) : null;
+				
                 if (realIcon != null && !realIcon.isRecycled()) {
                     canvas.drawBitmap(realIcon, null, iconBox, paint);
                 } else {
@@ -591,5 +600,27 @@ public class NokiaThemePreviewView extends View {
         }
         return super.onTouchEvent(event);
     }
+	// Tambahkan field di NokiaThemePreviewView.java:
+	private java.util.Map<String, Integer> uidToAssetIdx = new java.util.HashMap<>();
+
+	public void setAssetMappings(List<com.s60reborn.app.core.SknParser.SknAssetMapping> mappings) {
+		uidToAssetIdx.clear();
+		if (mappings != null) {
+			for (com.s60reborn.app.core.SknParser.SknAssetMapping m : mappings) {
+				uidToAssetIdx.put(m.uidKey, m.assetIndex);
+			}
+			// Perbarui wallpaper & menuBg jika dipetakan di .skn
+			Integer wpIdx = uidToAssetIdx.get("10005A26:00001000");
+			if (wpIdx != null && wpIdx >= 0 && wpIdx < themeIconBitmaps.size()) {
+				this.wallpaperBitmap = themeIconBitmaps.get(wpIdx);
+			}
+			Integer menuIdx = uidToAssetIdx.get("10005A26:00001001");
+			if (menuIdx != null && menuIdx >= 0 && menuIdx < themeIconBitmaps.size()) {
+				this.menuBgBitmap = themeIconBitmaps.get(menuIdx);
+			}
+		}
+		invalidate();
+	}
+	
 }
 

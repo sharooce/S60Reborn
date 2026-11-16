@@ -157,10 +157,26 @@ public class MifConverter {
         android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
         android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
 
-        // Lewati 32-byte MifIconHeader ("C##4")
-        int off = 32;
         ByteBuffer buf = ByteBuffer.wrap(chunkData).order(ByteOrder.LITTLE_ENDIAN);
+        int off = (buf.getInt(0) == 0x34232343) ? 32 : 0;
+        if (chunkData.length <= off + 4) return null;
+
         int magic = buf.getInt(off);
+		
+		if ((chunkData[0] & 0xFF) == 0x89 && (chunkData[1] & 0xFF) == 0x50) {
+            return android.graphics.BitmapFactory.decodeByteArray(chunkData, 0, chunkData.length);
+        }
+        // Jika file XML SVG yang membungkus PNG Base64
+        String head = new String(chunkData, 0, Math.min(chunkData.length, 256));
+        if (head.contains("base64,")) {
+            String fullXml = new String(chunkData);
+            int b64Idx = fullXml.indexOf("base64,");
+            int endQuote = fullXml.indexOf('"', b64Idx);
+            if (endQuote > b64Idx + 7) {
+                byte[] imgBytes = android.util.Base64.decode(fullXml.substring(b64Idx + 7, endQuote), android.util.Base64.DEFAULT);
+                return android.graphics.BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length);
+            }
+        }
 
         if (magic == 0x03FA56CC || magic == 0x03FA56CD || magic == 0x03FA56CE) {
             // Ekstrak palet warna dominan & koordinat path dari stream biner SVGB Symbian

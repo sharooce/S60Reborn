@@ -169,5 +169,112 @@ public class RscParser {
             return bos.toByteArray();
         }
     }
+	
+	/**
+     * Mengekstrak seluruh string ke file teks (.txt) untuk diterjemahkan secara massal (Format ala Zntxhan)
+     */
+    public static void exportToTextFile(List<RscStringEntry> entries, File exportFile) throws IOException {
+        FileOutputStream fos = null;
+        java.io.BufferedWriter writer = null;
+        try {
+            fos = new FileOutputStream(exportFile);
+            writer = new java.io.BufferedWriter(new java.io.OutputStreamWriter(fos, StandardCharsets.UTF_8));
+
+            writer.write("; S60Reborn RSC Language Export\n");
+            writer.write("; Format: [Index|Offset] = Text\n\n");
+
+            for (int i = 0; i < entries.size(); i++) {
+                RscStringEntry entry = entries.get(i);
+                String safeText = entry.text != null ? entry.text.replace("\n", "\\n").replace("\r", "\\r") : "";
+                writer.write(String.format("[%d|%d] = %s\n", entry.index, entry.offset, safeText));
+            }
+        } finally {
+            if (writer != null) {
+                try { writer.close(); } catch (IOException ignored) {}
+            } else if (fos != null) {
+                try { fos.close(); } catch (IOException ignored) {}
+            }
+        }
+    }
+
+    /**
+     * Mengimpor kembali file teks terjemahan ke dalam file .RSC secara massal (Java 7 Compatible)
+     */
+    public static void importFromTextFile(File rscFile, File importTxtFile) throws IOException {
+        if (!importTxtFile.exists()) throw new IOException("File terjemahan tidak ditemukan.");
+
+        List<RscStringEntry> currentEntries = parseRscStrings(rscFile);
+        java.util.Map<Integer, String> translatedMap = new java.util.HashMap<Integer, String>();
+
+        FileInputStream fis = null;
+        java.io.BufferedReader reader = null;
+        try {
+            fis = new FileInputStream(importTxtFile);
+            reader = new java.io.BufferedReader(new java.io.InputStreamReader(fis, StandardCharsets.UTF_8));
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith(";")) continue;
+
+                int bracketEnd = line.indexOf(']');
+                if (bracketEnd != -1 && line.startsWith("[")) {
+                    String meta = line.substring(1, bracketEnd);
+                    String text = line.substring(bracketEnd + 1).replace('=', ' ').trim();
+                    text = text.replace("\\n", "\n").replace("\\r", "\r");
+
+                    try {
+                        String[] parts = meta.split("\\|");
+                        int index = Integer.parseInt(parts[0]);
+                        translatedMap.put(index, text);
+                    } catch (Exception ignored) {}
+                }
+            }
+        } finally {
+            if (reader != null) {
+                try { reader.close(); } catch (IOException ignored) {}
+            } else if (fis != null) {
+                try { fis.close(); } catch (IOException ignored) {}
+            }
+        }
+
+        // Urutkan dari offset terbesar ke terkecil menggunakan Comparator standar Java 7 (Pengganti Lambda)
+        java.util.Collections.sort(currentEntries, new java.util.Comparator<RscStringEntry>() {
+				@Override
+				public int compare(RscStringEntry a, RscStringEntry b) {
+					// Urutkan menurun (descending) berdasarkan offset
+					return Integer.compare(b.offset, a.offset);
+				}
+			});
+
+        // Terapkan pembaruan
+        for (int i = 0; i < currentEntries.size(); i++) {
+            RscStringEntry entry = currentEntries.get(i);
+            if (translatedMap.containsKey(entry.index)) {
+                String newText = translatedMap.get(entry.index);
+                if (newText != null && !newText.equals(entry.text)) {
+                    updateRscString(rscFile, entry, newText);
+                }
+            }
+        }
+    }
+
+    /**
+     * Mencari string berdasarkan kata kunci (Case-insensitive untuk Java 7)
+     */
+    public static List<RscStringEntry> searchStrings(List<RscStringEntry> entries, String keyword) {
+        List<RscStringEntry> matched = new ArrayList<RscStringEntry>();
+        if (keyword == null || keyword.trim().isEmpty()) return matched;
+
+        String query = keyword.toLowerCase(java.util.Locale.getDefault());
+        for (int i = 0; i < entries.size(); i++) {
+            RscStringEntry entry = entries.get(i);
+            if (entry.text != null && entry.text.toLowerCase(java.util.Locale.getDefault()).contains(query)) {
+                matched.add(entry);
+            }
+        }
+        return matched;
+    }
+	
 }
 

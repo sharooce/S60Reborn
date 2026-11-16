@@ -11,8 +11,8 @@ public class SisFileEntry {
 	public int operation = 1;           // 1 = EOpInstall, 2 = EOpText (FT), 4 = EOpRun (FR)
     public int operationOptions = 0;    // 1 = TC (TextContinue), 2 = RI (RunInstall)
     public String conditionNotExistsPath = null; // Misal: "z:\sys\bin\libc.dll"
+	public String ifCondition; // Menyimpan ekspresi kondisi IF/ELSEIF
 	
-
     public SisFileEntry() {}
 
     @Override

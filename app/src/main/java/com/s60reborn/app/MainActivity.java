@@ -63,6 +63,15 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.ProgressBar;
+import com.s60reborn.app.ui.*;
+import android.widget.*;
+import android.content.*;
+import com.s60reborn.app.core.*;
 
 public class MainActivity extends Activity {
 
@@ -79,14 +88,17 @@ public class MainActivity extends Activity {
     private ListView llFileItemsContainer;
     private ScrollView svLog;
 
-    private Button fabMain, btnCloseProject;
+    private Button fabMain, btnCloseProject,btnDeleteCache;
     private LinearLayout fabMenuContainer;
     private View fabBackdrop;
     private boolean isFabOpen = false;
 	
 	private android.widget.ListView lvFileItems;
-	private TextView tvEmptyFileList; // Optional jika ingin pesan kosong di bawah/atas ListView
 	private com.s60reborn.app.ui.SisFileListAdapter fileListAdapter;
+	private final ExecutorService cacheExecutor = Executors.newSingleThreadExecutor();
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
+
+    private ProgressBar loadingIndicator;
 	
 
     private File baseWorkDir;
@@ -148,7 +160,8 @@ public class MainActivity extends Activity {
 						Toast.makeText(MainActivity.this, "Unpack paket dulu agar file fisik tersedia.", Toast.LENGTH_SHORT).show();
 						return;
 					}
-					openThemeVariantPicker(activeProjectDir, extension);
+					openEditTheme();
+					//openThemeVariantPicker(activeProjectDir, extension);
 				}
 
 				@Override
@@ -178,10 +191,310 @@ public class MainActivity extends Activity {
 			}
 		);
 		lvFileItems.setAdapter(fileListAdapter);
-        populateFormFromModel(currentPkgInfo);
-        restoreLastSessionIfAvailable();
+		loadingIndicator = new ProgressBar(this, null, android.R.attr.progressBarStyleLarge);
+        loadingIndicator.setIndeterminate(true);
+
+        // Atur posisi di tengah layar (Center)
+        RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(
+            RelativeLayout.LayoutParams.WRAP_CONTENT, 
+            RelativeLayout.LayoutParams.WRAP_CONTENT
+        );
+        params.addRule(RelativeLayout.CENTER_IN_PARENT);
+
+        // Ambil root layout dari activity (pastikan root layout di XML Anda adalah RelativeLayout atau FrameLayout)
+        // Atau Anda bisa menggunakan ViewGroup lain sesuai layout utama Anda
+        ViewGroup rootView = findViewById(R.layout.main); // Ganti dengan ID root layout XML Anda
+        if (rootView != null) {
+            rootView.addView(loadingIndicator, params);
+        }
+		restoreCacheInBackground();
+		btnDeleteCache=findViewById(R.id.btnDeleteCache);
+		btnDeleteCache.setOnClickListener(new View.OnClickListener(){
+			public void onClick(View v){
+				showSelectProjectToDeleteDialog();
+			}
+		});
 		
     }
+	
+	public void openEditTheme(){
+		Intent intent = new Intent(MainActivity.this, ThemeAssetEditorActivity.class);
+		intent.putExtra("project_dir", activeProjectDir.getAbsolutePath());
+		startActivity(intent);
+		
+	}
+	private void showSelectProjectToDeleteDialog() {
+		File projectsRootDir = new File(baseWorkDir, "projects");
+		File tempDir = new File(baseWorkDir, "temp"); // Folder temp Anda
+
+		final List<File> itemsToDelete = new ArrayList<>();
+		final List<CharSequence> displayNames = new ArrayList<>();
+
+		// 1. Masukkan folder proyek yang memiliki project.pkg
+		if (projectsRootDir.exists() && projectsRootDir.isDirectory()) {
+			File[] subDirs = projectsRootDir.listFiles();
+			if (subDirs != null) {
+				for (File dir : subDirs) {
+					if (dir.isDirectory()) {
+						File pkgFile = new File(dir, "project.pkg");
+						if (pkgFile.exists() && pkgFile.isFile()) {
+							itemsToDelete.add(dir);
+							displayNames.add("📁 Proyek: " + dir.getName());
+						}
+					}
+				}
+			}
+		}
+
+		// 2. Masukkan folder temp jika ada isinya
+		if (tempDir.exists() && tempDir.isDirectory()) {
+			File[] tempFiles = tempDir.listFiles();
+			if (tempFiles != null && tempFiles.length > 0) {
+				itemsToDelete.add(tempDir);
+				displayNames.add("🧹 Folder Temp (Cache Sementara)");
+			}
+		}
+
+		if (itemsToDelete.isEmpty()) {
+			Toast.makeText(MainActivity.this, "Tidak ada proyek atau folder temp yang perlu dibersihkan.", Toast.LENGTH_SHORT).show();
+			return;
+		}
+
+		final CharSequence[] projectNames = displayNames.toArray(new CharSequence[0]);
+
+		// --- DIALOG KUSTOM GLASSMORPHISM ---
+		final Dialog dialog = new Dialog(this);
+		dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+		if (dialog.getWindow() != null) {
+			dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+		}
+
+		final float d = getResources().getDisplayMetrics().density;
+		LinearLayout rootLayout = new LinearLayout(this);
+		rootLayout.setOrientation(LinearLayout.VERTICAL);
+		rootLayout.setBackgroundResource(R.drawable.dialog_glass_bg);
+
+		int pad = (int) (16 * d);
+		rootLayout.setPadding(pad, pad, pad, pad);
+
+		// Judul Dialog
+		TextView titleView = new TextView(this);
+		titleView.setText("🗑️ Pilih Item untuk Dihapus");
+		titleView.setTextColor(getResources().getColor(R.color.accent_cyan));
+		titleView.setTextSize(14f);
+		titleView.setTypeface(null, Typeface.BOLD);
+		titleView.setPadding(0, 0, 0, (int)(10 * d));
+		rootLayout.addView(titleView);
+
+		// ListView Daftar Item
+		final ListView listView = new ListView(this);
+		listView.setDivider(new ColorDrawable(Color.TRANSPARENT));
+		listView.setDividerHeight((int)(4 * d));
+
+		ArrayAdapter<CharSequence> adapter = new ArrayAdapter<CharSequence>(
+			this, android.R.layout.simple_list_item_1, projectNames
+		) {
+			@Override
+			public View getView(int position, View convertView, ViewGroup parent) {
+				View view = super.getView(position, convertView, parent);
+				TextView tv = (TextView) view.findViewById(android.R.id.text1);
+				tv.setTextColor(getResources().getColor(R.color.text_primary));
+				tv.setBackgroundResource(R.drawable.input_modern);
+				tv.setPadding((int)(12 * d), (int)(10 * d), (int)(12 * d), (int)(10 * d));
+				return view;
+			}
+		};
+		listView.setAdapter(adapter);
+
+		listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+				@Override
+				public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+					dialog.dismiss();
+					final File selectedTarget = itemsToDelete.get(position);
+					confirmAndDeleteTarget(selectedTarget);
+				}
+			});
+
+		rootLayout.addView(listView, new LinearLayout.LayoutParams(
+							   LinearLayout.LayoutParams.MATCH_PARENT, (int)(220 * d)
+						   ));
+
+		// Tombol Batal
+		Button btnCancel = new Button(this);
+		btnCancel.setText("Batal");
+		btnCancel.setAllCaps(false);
+		btnCancel.setTextColor(getResources().getColor(R.color.text_primary));
+		btnCancel.setBackgroundColor(getResources().getColor(R.color.bg_btn_neutral));
+		LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+			LinearLayout.LayoutParams.MATCH_PARENT, (int)(38 * d)
+		);
+		btnLp.setMargins(0, (int)(12 * d), 0, 0);
+		btnCancel.setOnClickListener(new View.OnClickListener() {
+				@Override
+				public void onClick(View v) {
+					dialog.dismiss();
+				}
+			});
+		rootLayout.addView(btnCancel, btnLp);
+
+		dialog.setContentView(rootLayout);
+		dialog.show();
+
+		if (dialog.getWindow() != null) {
+			int screenW = getResources().getDisplayMetrics().widthPixels;
+			dialog.getWindow().setLayout((int) (screenW * 0.90f), LinearLayout.LayoutParams.WRAP_CONTENT);
+		}
+	}
+	
+	private void confirmAndDeleteTarget(final File targetDir) {
+		final boolean isTemp = targetDir.getName().equals("temp");
+		final String labelName = isTemp ? "folder temp (file sementara)" : "proyek \"" + targetDir.getName() + "\"";
+
+		final Dialog confirmDialog = new Dialog(this);
+		confirmDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+		if (confirmDialog.getWindow() != null) {
+			confirmDialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+		}
+
+		float d = getResources().getDisplayMetrics().density;
+		LinearLayout rootLayout = new LinearLayout(this);
+		rootLayout.setOrientation(LinearLayout.VERTICAL);
+		rootLayout.setBackgroundResource(R.drawable.dialog_glass_bg);
+
+		int pad = (int) (16 * d);
+		rootLayout.setPadding(pad, pad, pad, pad);
+
+		TextView titleView = new TextView(this);
+		titleView.setText("⚠️ Konfirmasi Hapus");
+		titleView.setTextColor(getResources().getColor(R.color.accent_orange));
+		titleView.setTextSize(14f);
+		titleView.setTypeface(null, Typeface.BOLD);
+		titleView.setPadding(0, 0, 0, (int)(8 * d));
+		rootLayout.addView(titleView);
+
+		TextView msgView = new TextView(this);
+		msgView.setText("Hapus seluruh isi dari " + labelName + "?");
+		msgView.setTextColor(getResources().getColor(R.color.text_secondary));
+		msgView.setTextSize(12f);
+		msgView.setPadding(0, 0, 0, (int)(14 * d));
+		rootLayout.addView(msgView);
+
+		LinearLayout btnRow = new LinearLayout(this);
+		btnRow.setOrientation(LinearLayout.HORIZONTAL);
+
+		Button btnCancel = new Button(this);
+		btnCancel.setText("Batal");
+		btnCancel.setAllCaps(false);
+		btnCancel.setTextColor(getResources().getColor(R.color.text_primary));
+		btnCancel.setBackgroundColor(getResources().getColor(R.color.bg_btn_neutral));
+
+		Button btnDelete = new Button(this);
+		btnDelete.setText("Hapus");
+		btnDelete.setAllCaps(false);
+		btnDelete.setTextColor(Color.WHITE);
+		btnDelete.setBackgroundColor(getResources().getColor(R.color.accent_red));
+		btnDelete.setTypeface(null, Typeface.BOLD);
+
+		LinearLayout.LayoutParams lpb = new LinearLayout.LayoutParams(0, (int)(38 * d), 1f);
+		lpb.setMargins(0, 0, (int)(6 * d), 0);
+		btnRow.addView(btnCancel, lpb);
+
+		LinearLayout.LayoutParams lpb2 = new LinearLayout.LayoutParams(0, (int)(38 * d), 1f);
+		btnRow.addView(btnDelete, lpb2);
+
+		rootLayout.addView(btnRow);
+
+		btnCancel.setOnClickListener(new View.OnClickListener() {
+				@Override
+				public void onClick(View v) {
+					confirmDialog.dismiss();
+				}
+			});
+
+		btnDelete.setOnClickListener(new View.OnClickListener() {
+				@Override
+				public void onClick(View v) {
+					confirmDialog.dismiss();
+
+					if (isTemp) {
+						// Bersihkan isi folder temp tapi biarkan foldernya tetap ada
+						File[] files = targetDir.listFiles();
+						if (files != null) {
+							for (File f : files) {
+								deleteRecursive(f);
+							}
+						}
+						Toast.makeText(MainActivity.this, "Folder temp berhasil dibersihkan!", Toast.LENGTH_SHORT).show();
+					} else {
+						// Hapus folder proyek secara total
+						deleteRecursive(targetDir);
+
+						if (activeProjectDir != null && activeProjectDir.equals(targetDir)) {
+							activeProjectDir = null;
+							currentPkgInfo = null;
+							if (llFileItemsContainer != null) {
+								llFileItemsContainer.setAdapter(null);
+							}
+						}
+						Toast.makeText(MainActivity.this, "Proyek berhasil dihapus!", Toast.LENGTH_SHORT).show();
+					}
+				}
+			});
+
+		confirmDialog.setContentView(confirmDialog.getWindow() != null ? rootLayout : rootLayout);
+		confirmDialog.setContentView(rootLayout);
+		confirmDialog.show();
+
+		if (confirmDialog.getWindow() != null) {
+			int screenW = getResources().getDisplayMetrics().widthPixels;
+			confirmDialog.getWindow().setLayout((int) (screenW * 0.88f), LinearLayout.LayoutParams.WRAP_CONTENT);
+		}
+	}
+	
+
+	private void deleteRecursive(File fileOrDirectory) {
+		if (fileOrDirectory.isDirectory()) {
+			File[] children = fileOrDirectory.listFiles();
+			if (children != null) {
+				for (File child : children) {
+					deleteRecursive(child);
+				}
+			}
+		}
+		fileOrDirectory.delete();
+	}
+	
+	private void restoreCacheInBackground() {
+		// 1. Tampilkan indikator loading (jika ada)
+		if (loadingIndicator != null) {
+			loadingIndicator.setVisibility(View.VISIBLE);
+		}
+
+		// 2. Jalankan pembacaan cache di Background Thread
+		cacheExecutor.execute(new Runnable() {
+				@Override
+				public void run() {
+					// Cek apakah data cache sesi sebelumnya valid
+					final boolean hasValidData = (currentPkgInfo != null && currentPkgInfo.files != null && !currentPkgInfo.files.isEmpty());
+
+					// 3. Kembalikan hasil ke UI Thread
+					uiHandler.post(new Runnable() {
+							@Override
+							public void run() {
+								// Sembunyikan loading
+								if (loadingIndicator != null) {
+									loadingIndicator.setVisibility(View.GONE);
+								}
+								populateFormFromModel(currentPkgInfo);
+								restoreLastSessionIfAvailable();
+
+							}
+						});
+				}
+			});
+	}
+	
+	
 
     private void setupClickListeners() {
         fabMain.setOnClickListener(new View.OnClickListener() {
@@ -264,6 +577,7 @@ public class MainActivity extends Activity {
 		
 		
     }
+	
 
     private void openFileChooser(String title, int reqCode) {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
@@ -1030,8 +1344,22 @@ public class MainActivity extends Activity {
         dPrompt.setContentView(box);
         dPrompt.show();
     }
+	
+	private void showInteractiveNokiaThemeDialog(final File sknFile) {
+		File variantRoot = sknFile.getParentFile();
+		File cursor = variantRoot;
+		while (cursor != null) {
+			if (cursor.getName().startsWith("varian_") || cursor.equals(activeProjectDir)) {
+				variantRoot = cursor;
+				break;
+			}
+			cursor = cursor.getParentFile();
+		}
+		com.s60reborn.app.ui.NokiaThemeStudioDialog.show(this, sknFile, variantRoot);
+	}
+	
 
-    private void showInteractiveNokiaThemeDialog(final File sknFile) {
+    private void showInteractiveNokiaThemeDialog2(final File sknFile) {
         try {
             final SknParser.SknThemeData sknData = SknParser.parseSkn(sknFile);
             Bitmap wpBmp = null, menuBmp = null;
@@ -1419,19 +1747,34 @@ public class MainActivity extends Activity {
     }
 
     private void restoreLastSessionIfAvailable() {
-        SharedPreferences prefs = getSharedPreferences("s60reborn_prefs", MODE_PRIVATE);
+        android.content.SharedPreferences prefs = getSharedPreferences("s60reborn_prefs", MODE_PRIVATE);
         String savedProjPath = prefs.getString("last_project_dir", "");
         String savedSisPath = prefs.getString("last_sis_file", "");
 
         File savedProjDir = !savedProjPath.isEmpty() ? new File(savedProjPath) : null;
-        if (savedProjDir == null || !savedProjDir.exists()) return;
+
+        // Fallback: jika prefs kosong, cek apakah ada folder proyek terakhir di direktori Projects/
+        if (savedProjDir == null || !savedProjDir.exists()) {
+            File projectsRoot = new File(baseWorkDir, "Projects");
+            File[] dirs = projectsRoot.listFiles();
+            if (dirs != null) {
+                long latestMod = 0;
+                for (File d : dirs) {
+                    if (d.isDirectory() && new File(d, "project.pkg").exists() && d.lastModified() > latestMod) {
+                        latestMod = d.lastModified();
+                        savedProjDir = d;
+                    }
+                }
+            }
+        }
+
+        if (savedProjDir == null || !savedProjDir.exists()) return; // Memang belum ada cache, skip!
 
         File savedPkgFile = new File(savedProjDir, "project.pkg");
         if (!savedPkgFile.exists()) return;
 
         try {
             activeProjectDir = savedProjDir;
-            config = SisProjectConfig.loadFromFile(activeProjectDir);
             if (!savedSisPath.isEmpty() && new File(savedSisPath).exists()) {
                 activeInputSisFile = new File(savedSisPath);
                 tvActiveFile.setText(activeInputSisFile.getName());
@@ -1445,9 +1788,11 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             log("Skip cache lama: " + e.getMessage());
         }
-        updateCloseProjectButtonVisibility();
-    }
+		updateCloseProjectButtonVisibility();
 
+    }
+	
+	
     private void openThemeVariantPicker(File projectDir, final String targetExt) {
         final List<File> targetFiles = new ArrayList<>();
         final List<String> labels = new ArrayList<>();
