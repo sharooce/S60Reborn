@@ -1,50 +1,52 @@
 # S60Reborn
 
-**S60Reborn** adalah utilitas native Android (Java) untuk membongkar (*unpack*), menginspeksi metadata, memodifikasi, dan merakit ulang (*repack*) paket instalasi **Symbian OS** (`.sis` / `.sisx`) langsung di perangkat mobile tanpa ketergantungan PC atau toolchain desktop yang berat.
+**S60Reborn** adalah utilitas native Android (Java) untuk membongkar (*unpack*), menginspeksi metadata, memodifikasi, dan merakit ulang (*repack*) paket instalasi **Symbian OS** (`.sis` / `.sisx`) langsung di perangkat Android tanpa ketergantungan PC atau toolchain desktop yang berat.
 
 ---
 
-## Fitur yang Sudah Berjalan (Completed)
+## Fitur yang Sudah Berjalan
 
-- **Inspeksi & Unpack `.sisx` (Symbian OS 9.x / S60v3, S60v5, Symbian^3 / Belle):**
-  - Membaca header UID1/UID2/UID3 beserta verifikasi checksum UID Symbian.
-  - Dekompresi stream Zlib (`FIELD_COMPRESSED`) untuk `SISController` dan `SISData` secara otomatis.
-  - Pemisahan otomatis aset biner berdasarkan *magic bytes* (`.mbm`, `.mif`, `.skn`, `.ini`, `.exe`, `.dll`, `.rsc`).
-  - Dukungan paket multi-varian (`varian_1/`, `varian_2/`, dst.) untuk mencegah penimpaan file pada cabang kondisi `IF / ELSEIF`.
-  - Deteksi status sertifikat tanda tangan digital (*Signed Certificate Chain*).
-- **Unpack Legacy `.sis` (Symbian OS 6/7/8 - S60v1 / S60v2):**
-  - Parsing header EPOC legacy, tabel bahasa, serta ekstraksi record file.
-- **Theme Editor (Editor Tema Symbian):**
-  - Membongkar dan memodifikasi aset tema S60 (`.mbm`, `.mif`, `.skn`, dan konfigurasi `.ini`) langsung dari hasil ekstrak paket tema.
-  - Penggantian ikon, wallpaper, dan elemen antarmuka tema secara terstruktur sebelum dirakit ulang.
-- **Language Editing (Editor Bahasa & Lokalisasi):**
-  - Mengedit file resource bahasa Symbian (`.rsc`, `.r01`, `.rXX`, dan string lokalisasi) untuk menerjemahkan atau menyesuaikan teks antarmuka aplikasi maupun tema S60.
-- **Auto-Generate Script `.pkg`:**
-  - Menghasilkan file `project.pkg` otomatis lengkap dengan header UID3, versi aplikasi, nama vendor, target `Series60ProductID`, dan pemetaan path relatif ke direktori target Symbian (`!:\sys\bin\...`, `!:\resource\apps\...`).
-- **Repack Legacy `.sis` (S60v1 / S60v2):**
-  - Membangun ulang paket instalasi legacy dari `project.pkg` lengkap dengan kalkulasi CRC-16 CCITT UID checksum.
-- **Ekstraksi Kapabilitas E32Image:**
-  - Membaca 8-byte bitmask kapabilitas langsung dari offset `0x80` pada header biner EPOC (`.exe` / `.dll`).
+- **Unpack & Repack `.sisx` (S60v3, S60v5, Symbian^3 / Anna / Belle):**
+  - Membongkar dan merakit ulang paket instalasi Symbian OS 9.x beserta dekompresi stream Zlib otomatis.
+  - Sudah teruji dan berjalan mulus saat diinstal langsung di perangkat asli.
+- **Unpack & Repack Legacy `.sis` (S60v1 / S60v2):**
+  - Parsing header EPOC legacy, tabel bahasa, prerequisite, dan record file, serta perakitan ulang (repack) struktur biner `.sis` S60v2 (*berjalan normal, belum diuji langsung di installer perangkat fisik*).
+- **SKN Editor & Theme Preview:**
+  - Membaca database `.skn` tema Symbian.
+  - Mendukung pratinjau tampilan tema (*Theme Preview*) bergaya **Nokia E72** dan **Nokia N95**.
+- **AlterE32 (Editor Kapabilitas Biner):**
+  - Membaca dan mengedit bitmask kapabilitas langsung pada file biner EPOC (`.exe`, `.dll`, `.pyd`).
+- **Editor Metadata & Opsi Paket Lengkap:**
+  - Mengedit informasi paket (*App Name*, versi Major/Minor/Build, *Vendor*, UID3, dll.).
+  - Mendukung *Advanced Options* saat instalasi.
+  - Mendukung notifikasi teks (`FT`) maupun gambar/logo saat proses instalasi.
+  - Mendukung opsi *checkbox* pilihan komponen sebelum instalasi.
+  - Mendukung penyisipan paket *embedded SIS* (`@"sub.sis"`).
+  - Mendukung *Multiple Target Device* (`Series60ProductID` untuk berbagai versi S60/Symbian).
+  - Serta berbagai utilitas pendukung lainnya.
 
 ---
 
-## Status Pengembangan & Known Issues (Work in Progress)
+## Known Issues (Masih dalam Penyempurnaan)
 
-Bagian berikut sedang dalam tahap penyempurnaan dan akan diperbarui pada commit selanjutnya:
+- **Sign `.sisx`:** Proses penandatanganan (*signing*) sertifikat pada `.sisx` masih memiliki bug dan belum berjalan sempurna.
+- **MIF & MBM Editor:** Pengelolaan dan pengeditan aset `.mif` maupun `.mbm` belum sepenuhnya sempurna dan masih terdapat beberapa bug.
 
-- **Repack `.sisx` Modern (Symbian OS 9.x):**
-  - Penyelarasan struktur hierarki TLV (`FIELD_CONTENTS` -> `FIELD_CONTROLLER` / `FIELD_DATA` -> `FIELD_COMPRESSED`) agar 100% kompatibel dengan parser resmi perangkat Nokia S60 (seperti Nokia E72 / N86 / N95) tanpa memicu pesan *File Corrupted* saat instalasi.
-  - Penyesuaian deduplikasi blok data berbasis SHA-1 (`FIELD_HASH` & `FIELD_DATA_INDEX`) pada paket multi-file.
-- **Penandatanganan Paket (Self-Signing SISX):**
-  - Integrasi penandatanganan sertifikat devcert / self-signed langsung setelah proses repack selesai.
+---
+
+## Rencana Perbaikan di Commit Selanjutnya
+
+- Penyempurnaan **MIF Editor** dan **MBM Editor**.
+- Perbaikan bug pada proses **Sign `.sisx`** serta stabilitas keseluruhan aplikasi.
+- Penambahan fitur-fitur lanjutan lainnya jika memungkinkan.
 
 ---
 
 ## Struktur Modul Utama
 
-- `com.s60reborn.app.core.SisxCoreParser` — Parser biner & extractor untuk format `.sisx` (OS 9.x) dan legacy `.sis` (OS 6/7/8), serta generator `project.pkg`.
-- `com.s60reborn.app.core.SisxPacker` — Compiler script `.pkg` dan builder struktur biner TLV Symbian OS beserta kalkulator UID checksum.
-- `com.s60reborn.app.model.*` — Model data untuk representasi paket (`SisPackageInfo`) dan entri file (`SisFileEntry`).
+- `com.s60reborn.app.core.SisxCoreParser` & `SisxPacker` — Parser, extractor, dan compiler paket modern `.sisx` (Symbian OS 9.x).
+- `com.s60reborn.app.core.SisLegacyParser` & `SisLegacyPacker` — Parser dan builder biner paket legacy `.sis` (S60v1 / S60v2).
+- `com.s60reborn.app.model.*` — Model data paket (`SisPackageInfo`), entri file (`SisFileEntry`), dependensi, dan konfigurasi proyek (`SisProjectConfig`).
 
 ---
 
