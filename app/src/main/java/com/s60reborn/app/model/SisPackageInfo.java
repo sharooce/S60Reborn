@@ -19,6 +19,7 @@ public class SisPackageInfo {
     public boolean isSigned = false;
     public String signerInfo = "Unsigned";
 	public String installNote = ""; 
+	public long installFlags = 0;
 	
 
     public List<SisFileEntry> files = new ArrayList<>();
@@ -32,5 +33,22 @@ public class SisPackageInfo {
     public String getFormattedVersion() {
         return majorVersion + "," + minorVersion + "," + buildVersion;
     }
+	public static class DependencyItem {
+        public int uid;
+        public int major, minor, build;
+        public String name;
+
+        public DependencyItem(int uid, int major, int minor, int build, String name) {
+            this.uid = uid;
+            this.major = major;
+            this.minor = minor;
+            this.build = build;
+            this.name = name;
+        }
+    }
+
+    public List<DependencyItem> targetDevices = new ArrayList<DependencyItem>();
+    public List<DependencyItem> dependencies = new ArrayList<DependencyItem>();
+	
 }
 

@@ -265,7 +265,7 @@ public class ThemeAssetEditorActivity extends Activity {
         renderCurrentPage();
     }
 
-    private void reloadAllItemsForCurrentMode() {
+	private void reloadAllItemsForCurrentMode() {
         allModeItems.clear();
 
         if (currentMode == MODE_MIF && mifCacheDir.exists()) {
@@ -274,14 +274,14 @@ public class ThemeAssetEditorActivity extends Activity {
                 Arrays.sort(files, new Comparator<File>() {
 						@Override
 						public int compare(File a, File b) {
-							return a.getName().compareToIgnoreCase(b.getName());
+							return extractLeadingNumber(a.getName()) - extractLeadingNumber(b.getName());
 						}
 					});
                 for (int i = 0; i < files.length; i++) {
                     AssetGridItem item = new AssetGridItem();
                     item.index = i;
                     item.title = files[i].getName();
-                    item.subInfo = "Index #" + i + " (" + (files[i].length() / 1024) + " KB)";
+                    item.subInfo = "Index #" + i + " (" + Math.max(1, files[i].length() / 1024) + " KB)";
                     item.cacheFile = files[i];
                     allModeItems.add(item);
                 }
@@ -289,6 +289,12 @@ public class ThemeAssetEditorActivity extends Activity {
         } else if (currentMode == MODE_MBM && mbmCacheDir.exists()) {
             File[] files = mbmCacheDir.listFiles();
             if (files != null) {
+                Arrays.sort(files, new Comparator<File>() {
+						@Override
+						public int compare(File a, File b) {
+							return extractLeadingNumber(a.getName()) - extractLeadingNumber(b.getName());
+						}
+					});
                 for (int i = 0; i < files.length; i++) {
                     AssetGridItem item = new AssetGridItem();
                     item.index = i;
@@ -308,11 +314,25 @@ public class ThemeAssetEditorActivity extends Activity {
                     item.title = m.elementName;
                     item.subInfo = m.uidKey + " -> Idx:" + m.assetIndex;
                     item.sknMapping = m;
+                    if (mifCacheDir.exists()) {
+                        item.cacheFile = findCacheFileByIndex(mifCacheDir, m.assetIndex / 2);
+                    }
                     allModeItems.add(item);
                 }
             } catch (Exception ignored) {}
         }
     }
+
+    private int extractLeadingNumber(String name) {
+        int dot = name.indexOf('.');
+        String numPart = (dot > 0) ? name.substring(0, dot) : name;
+        try {
+            return Integer.parseInt(numPart.replaceAll("[^0-9]", ""));
+        } catch (Exception e) {
+            return Integer.MAX_VALUE;
+        }
+    }
+	
 
     private void renderCurrentPage() {
         currentPageItems.clear();

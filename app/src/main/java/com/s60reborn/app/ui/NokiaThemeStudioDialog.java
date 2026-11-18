@@ -46,22 +46,25 @@ public class NokiaThemeStudioDialog {
             final Map<String, String> sisDb = SknParser.loadBinarySisContentsDbFromAssets(context, ASSET_DB_FILENAME);
             final List<SknAssetMapping> mappings = SknParser.extractAssetMappings(sknFile, sisDb);
 
-            final List<Bitmap> allThemeBitmaps = new ArrayList<>();
+			final List<Bitmap> allThemeBitmaps = new ArrayList<>();
             File mbmFile = findFileByExt(variantRoot, ".mbm");
-			if (mbmFile != null && mbmFile.exists()) {
-				allThemeBitmaps.addAll(MbmConverter.loadBitmapsFromMbm(mbmFile));
-			}
-			File mifFile = findFileByExt(variantRoot, ".mif");
-			if (mifFile != null && mifFile.exists()) {
-				List<com.s60reborn.app.core.MifConverter.MifIconEntry> mifIcons =
-					com.s60reborn.app.core.MifConverter.parseMif(mifFile);
-				for (com.s60reborn.app.core.MifConverter.MifIconEntry entry : mifIcons) {
-					if (entry.data != null && entry.data.length > 0) {
-						Bitmap iconBmp = com.s60reborn.app.core.MifConverter.renderMifIconToBitmap(entry.data, 64);
-						if (iconBmp != null) allThemeBitmaps.add(iconBmp);
-					}
-				}
-			}
+            if (mbmFile != null && mbmFile.exists()) {
+                allThemeBitmaps.addAll(MbmConverter.loadBitmapsFromMbm(mbmFile));
+            }
+            File mifFile = findFileByExt(variantRoot, ".mif");
+            if (mifFile != null && mifFile.exists()) {
+                List<com.s60reborn.app.core.MifConverter.MifIconEntry> mifIcons =
+                    com.s60reborn.app.core.MifConverter.parseMif(mifFile);
+                for (com.s60reborn.app.core.MifConverter.MifIconEntry entry : mifIcons) {
+                    Bitmap iconBmp = null;
+                    if (entry.data != null && entry.data.length > 0) {
+                        iconBmp = com.s60reborn.app.core.MifConverter.renderMifIconToBitmap(entry.data, 64);
+                    }
+                    // Tetap tambahkan (walau null) agar nomor indeks 1:1 dengan tabel MIF/SKN!
+                    allThemeBitmaps.add(iconBmp);
+                }
+            }
+			
 			
 
             Bitmap wpBmp = !allThemeBitmaps.isEmpty() ? allThemeBitmaps.get(0) : null;

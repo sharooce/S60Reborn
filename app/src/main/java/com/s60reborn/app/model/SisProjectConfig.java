@@ -1,5 +1,16 @@
 package com.s60reborn.app.model;
 
+import com.s60reborn.app.core.SisField;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -15,6 +26,10 @@ public class SisProjectConfig {
     public boolean flagRomUpgrade   = false; // 0x04
     public int targetPlatformUid    = 0x101F7961; // S60v3 Default
 
+    // 1b. Multi-Target Devices & Software Dependencies (Tag 17)
+    public List<SisPackageInfo.DependencyItem> targetDevices = new ArrayList<SisPackageInfo.DependencyItem>();
+    public List<SisPackageInfo.DependencyItem> dependencies = new ArrayList<SisPackageInfo.DependencyItem>();
+
     // 2. Checkbox Opsi Saat Install (SISSupportedOptions + SISIf)
     public List<InstallOption> installOptions = new ArrayList<InstallOption>();
 
@@ -29,6 +44,7 @@ public class SisProjectConfig {
     public String customCerPath = "";
     public String customKeyPath = "";
     public String selfSignCn = "S60Reborn Dev";
+    public boolean rebuildWithCert = false;
 
     public boolean isLegacySisV1V2() {
         return packageFormat == 1;
@@ -40,6 +56,20 @@ public class SisProjectConfig {
         if (flagNonRemovable) flags |= 0x02;
         if (flagRomUpgrade)   flags |= 0x04;
         return flags;
+    }
+
+    public boolean hasTargetDevice(int uid) {
+        for (SisPackageInfo.DependencyItem item : targetDevices) {
+            if (item.uid == uid) return true;
+        }
+        return targetDevices.isEmpty() && targetPlatformUid == uid;
+    }
+
+    public boolean hasDependency(int uid) {
+        for (SisPackageInfo.DependencyItem item : dependencies) {
+            if (item.uid == uid) return true;
+        }
+        return false;
     }
 
     public static class InstallOption {
@@ -55,15 +85,16 @@ public class SisProjectConfig {
         public int ruleType; // 0 = IF NOT EXISTS("path"), 1 = IF package(0xUID)
         public String conditionParam;
         public List<String> fileRelPaths = new ArrayList<String>();
+        public List<String> targetFileRelPaths = new ArrayList<String>();
     }
-	
-	public void saveToFile(java.io.File projectDir) throws java.io.IOException {
+
+    public void saveToFile(File projectDir) throws IOException {
         if (projectDir == null) return;
         if (!projectDir.exists()) projectDir.mkdirs();
-        java.io.File cfgFile = new java.io.File(projectDir, "project_config.ini");
+        File cfgFile = new File(projectDir, "project_config.ini");
 
-        java.io.PrintWriter pw = new java.io.PrintWriter(
-			new java.io.OutputStreamWriter(new java.io.FileOutputStream(cfgFile), java.nio.charset.StandardCharsets.UTF_8));
+        PrintWriter pw = new PrintWriter(
+            new OutputStreamWriter(new FileOutputStream(cfgFile), StandardCharsets.UTF_8));
         try {
             pw.println("PACKAGE_FORMAT=" + packageFormat);
             pw.println("INSTALL_TYPE=" + installType);
@@ -75,6 +106,18 @@ public class SisProjectConfig {
             pw.println("CUSTOM_CER=" + (customCerPath != null ? customCerPath : ""));
             pw.println("CUSTOM_KEY=" + (customKeyPath != null ? customKeyPath : ""));
             pw.println("SELF_SIGN_CN=" + (selfSignCn != null ? selfSignCn : "S60Reborn Dev"));
+
+            // Simpan Multi-Target Devices
+            for (SisPackageInfo.DependencyItem dev : targetDevices) {
+                String dName = (dev.name != null && !dev.name.trim().isEmpty()) ? dev.name.trim() : "Series60ProductID";
+                pw.printf("TARGET_DEV=0x%08X|%d|%d|%d|%s%n", dev.uid, dev.major, dev.minor, dev.build, dName);
+            }
+
+            // Simpan Software Dependencies (Qt, QtMobility, OpenC, dll.)
+            for (SisPackageInfo.DependencyItem dep : dependencies) {
+                String depName = (dep.name != null && !dep.name.trim().isEmpty()) ? dep.name.trim() : "Dependency";
+                pw.printf("SOFT_DEP=0x%08X|%d|%d|%d|%s%n", dep.uid, dep.major, dep.minor, dep.build, depName);
+            }
 
             // Simpan Checkbox Opsi Install
             for (InstallOption opt : installOptions) {
@@ -105,15 +148,15 @@ public class SisProjectConfig {
         }
     }
 
-    public static SisProjectConfig loadFromFile(java.io.File projectDir) {
+    public static SisProjectConfig loadFromFile(File projectDir) {
         SisProjectConfig cfg = new SisProjectConfig();
         if (projectDir == null) return cfg;
-        java.io.File cfgFile = new java.io.File(projectDir, "project_config.ini");
+        File cfgFile = new File(projectDir, "project_config.ini");
         if (!cfgFile.exists()) return cfg;
 
         try {
-            java.io.BufferedReader br = new java.io.BufferedReader(
-				new java.io.InputStreamReader(new java.io.FileInputStream(cfgFile), java.nio.charset.StandardCharsets.UTF_8));
+            BufferedReader br = new BufferedReader(
+                new InputStreamReader(new FileInputStream(cfgFile), StandardCharsets.UTF_8));
             try {
                 String line;
                 while ((line = br.readLine()) != null) {
@@ -130,12 +173,30 @@ public class SisProjectConfig {
                     else if ("FLAG_SHUTDOWN".equals(k)) cfg.flagShutdownApps = Boolean.parseBoolean(v);
                     else if ("FLAG_NON_REMOVABLE".equals(k)) cfg.flagNonRemovable = Boolean.parseBoolean(v);
                     else if ("FLAG_ROM_UPGRADE".equals(k)) cfg.flagRomUpgrade = Boolean.parseBoolean(v);
-                    else if ("PLATFORM_UID".equals(k)) cfg.targetPlatformUid = (int) Long.parseLong(v.replace("0x", ""), 16);
+                    else if ("PLATFORM_UID".equals(k)) {
+                        cfg.targetPlatformUid = (int) Long.parseLong(v.replace("0x", "").replace("0X", ""), 16);
+                    }
                     else if ("SIGN_MODE".equals(k)) cfg.signMode = Integer.parseInt(v);
                     else if ("CUSTOM_CER".equals(k)) cfg.customCerPath = v;
                     else if ("CUSTOM_KEY".equals(k)) cfg.customKeyPath = v;
                     else if ("SELF_SIGN_CN".equals(k)) cfg.selfSignCn = v;
-                    else if ("OPTION".equals(k)) {
+                    else if ("TARGET_DEV".equals(k)) {
+                        String[] p = v.split("\\|", 5);
+                        if (p.length >= 4) {
+                            int uid = (int) Long.parseLong(p[0].replace("0x", "").replace("0X", ""), 16);
+                            String name = (p.length >= 5 && !p[4].isEmpty()) ? p[4] : "Series60ProductID";
+                            cfg.targetDevices.add(new SisPackageInfo.DependencyItem(
+													  uid, Integer.parseInt(p[1]), Integer.parseInt(p[2]), Integer.parseInt(p[3]), name));
+                        }
+                    } else if ("SOFT_DEP".equals(k)) {
+                        String[] p = v.split("\\|", 5);
+                        if (p.length >= 4) {
+                            int uid = (int) Long.parseLong(p[0].replace("0x", "").replace("0X", ""), 16);
+                            String name = (p.length >= 5 && !p[4].isEmpty()) ? p[4] : "Dependency";
+                            cfg.dependencies.add(new SisPackageInfo.DependencyItem(
+													 uid, Integer.parseInt(p[1]), Integer.parseInt(p[2]), Integer.parseInt(p[3]), name));
+                        }
+                    } else if ("OPTION".equals(k)) {
                         String[] p = v.split("\\|", 2);
                         InstallOption opt = new InstallOption(p[0]);
                         if (p.length > 1 && !p[1].isEmpty()) {
@@ -163,6 +224,27 @@ public class SisProjectConfig {
         } catch (Exception ignored) {}
         return cfg;
     }
-	
+
+    public static void syncConfigFromUnpackedInfo(SisPackageInfo info, SisProjectConfig config) {
+        if (info == null || config == null) return;
+        config.packageFormat = (info.uid2 == SisField.LEGACY_SIS_UID2_MAGIC) ? 1 : 0;
+        config.installType = info.installType;
+        config.flagShutdownApps = (info.installFlags & 0x01) != 0;
+        config.flagNonRemovable = (info.installFlags & 0x02) != 0;
+        config.flagRomUpgrade   = (info.installFlags & 0x04) != 0;
+        config.signMode = info.isSigned ? 2 : 0;
+
+        config.targetDevices.clear();
+        if (info.targetDevices != null) {
+            config.targetDevices.addAll(info.targetDevices);
+            if (!info.targetDevices.isEmpty()) {
+                config.targetPlatformUid = info.targetDevices.get(0).uid;
+            }
+        }
+        config.dependencies.clear();
+        if (info.dependencies != null) {
+            config.dependencies.addAll(info.dependencies);
+        }
+    }
 }
 

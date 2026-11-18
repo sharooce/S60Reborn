@@ -26,6 +26,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import com.s60reborn.app.*;
+import com.s60reborn.app.model.*;
 
 public class SisAdvancedSettingsDialog {
 
@@ -50,12 +51,52 @@ public class SisAdvancedSettingsDialog {
         final LinearLayout sectionCert = root.findViewById(R.id.sectionCertificateSigning);
         final Spinner spPackageFormat = root.findViewById(R.id.spPackageFormat);
         final Spinner spInstallType = root.findViewById(R.id.spInstallType);
-        final Spinner spPlatform = root.findViewById(R.id.spPlatformTarget);
+		// 2. Multi-Checkbox Target Platform
+        final CheckBox cbPlatV3    = root.findViewById(R.id.cbPlatS60v3);
+        final CheckBox cbPlatFp1   = root.findViewById(R.id.cbPlatS60v3Fp1);
+        final CheckBox cbPlatFp2   = root.findViewById(R.id.cbPlatS60v3Fp2);
+        final CheckBox cbPlatV5    = root.findViewById(R.id.cbPlatS60v5);
+        final CheckBox cbPlatSym3  = root.findViewById(R.id.cbPlatSymbian3);
+        final CheckBox cbPlatBelle = root.findViewById(R.id.cbPlatAnnaBelle);
+
+        // 2b. Multi-Checkbox Dependencies
+        final CheckBox cbDepQt     = root.findViewById(R.id.cbDepQt);
+        final CheckBox cbDepQtMob  = root.findViewById(R.id.cbDepQtMobility);
+        final CheckBox cbDepOpenC  = root.findViewById(R.id.cbDepOpenC);
+
+        // Isi centang otomatis sesuai hasil Unpack (config.targetDevices & config.dependencies)
+        cbPlatV3.setChecked(config.hasTargetDevice(0x101F7961));
+        cbPlatFp1.setChecked(config.hasTargetDevice(0x102032BE));
+        cbPlatFp2.setChecked(config.hasTargetDevice(0x102752AE));
+        cbPlatV5.setChecked(config.hasTargetDevice(0x1028315F));
+        cbPlatSym3.setChecked(config.hasTargetDevice(0x20022E6D));
+        cbPlatBelle.setChecked(config.hasTargetDevice(0x20032DE7));
+
+        cbDepQt.setChecked(config.hasDependency(0x2001E61C));
+        cbDepQtMob.setChecked(config.hasDependency(0x2002AC89));
+        cbDepOpenC.setChecked(config.hasDependency(0x20009A80));
+
+        // Tampilkan Capabilities asli dari .exe di tvExeCapSummary
+        final TextView tvExeCapSummary = root.findViewById(R.id.tvExeCapSummary);
+        for (SisFileEntry f : projectFiles) {
+            if (f.localRelPath != null && f.localRelPath.toLowerCase().endsWith(".exe")) {
+                File phys = new File(projectDir, f.localRelPath);
+                if (phys.exists()) {
+                    try {
+                        E32ImagePatcher.E32Info eInfo = E32ImagePatcher.inspectE32(phys);
+                        int count = Integer.bitCount(eInfo.capabilities);
+                        tvExeCapSummary.setText(String.format("Capabilities Asli: %d aktif (0x%08X)", count, eInfo.capabilities));
+                    } catch (Exception ignored) {}
+                }
+                break;
+            }
+        }
+		
         final Spinner spSign = root.findViewById(R.id.spSignMode);
         final CheckBox cbShutdown = root.findViewById(R.id.cbFlagShutdownApps);
         final CheckBox cbRom = root.findViewById(R.id.cbFlagRomUpgrade);
         final TextView tvOptionsSummary = root.findViewById(R.id.tvOptionsSummary);
-
+		
         // 0. Format Paket: SISX v3/v5/Belle vs SIS Legacy v1/v2
         String[] formats = {
             "SISX (S60v3 / S60v5 / Belle - Signed)",
@@ -86,11 +127,7 @@ public class SisAdvancedSettingsDialog {
             "S60 5th Edition (0x1028315F)",
             "Symbian^3 / Anna / Belle (0x20022E6D)"
         };
-        spPlatform.setAdapter(new ArrayAdapter<String>(
-								  ctx, android.R.layout.simple_spinner_dropdown_item, plats));
-        for (int i = 0; i < platUids.length; i++) {
-            if (platUids[i] == config.targetPlatformUid) spPlatform.setSelection(i);
-        }
+       
 
         cbShutdown.setChecked(config.flagShutdownApps);
         cbRom.setChecked(config.flagRomUpgrade);
@@ -107,6 +144,8 @@ public class SisAdvancedSettingsDialog {
         spSign.setSelection(config.signMode);
 
         // Auto-Hide Pengaturan Sertifikat & Capabilities saat SIS v1/v2 dipilih
+		final LinearLayout sectionTargets = root.findViewById(R.id.sectionTargetPrerequisites);
+
         final Runnable applyFormatVisibility = new Runnable() {
             @Override
             public void run() {
@@ -115,7 +154,8 @@ public class SisAdvancedSettingsDialog {
 
                 sectionCert.setVisibility(vis);
                 sectionCaps.setVisibility(vis);
-                spPlatform.setVisibility(vis);
+                if (sectionTargets != null) sectionTargets.setVisibility(vis);
+                spInstallType.setVisibility(vis);
                 cbShutdown.setVisibility(vis);
                 cbRom.setVisibility(vis);
 
@@ -124,6 +164,7 @@ public class SisAdvancedSettingsDialog {
                 }
             }
         };
+		
 
         spPackageFormat.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
 				@Override
@@ -168,20 +209,38 @@ public class SisAdvancedSettingsDialog {
 				}
 			});
 
-        root.findViewById(R.id.btnSaveAdv).setOnClickListener(new View.OnClickListener() {
+		root.findViewById(R.id.btnSaveAdv).setOnClickListener(new View.OnClickListener() {
 				@Override
 				public void onClick(View v) {
 					config.packageFormat = spPackageFormat.getSelectedItemPosition();
 					config.installType = spInstallType.getSelectedItemPosition();
-					config.targetPlatformUid = platUids[spPlatform.getSelectedItemPosition()];
 					config.flagShutdownApps = cbShutdown.isChecked();
 					config.flagRomUpgrade = cbRom.isChecked();
 					config.signMode = config.isLegacySisV1V2() ? 0 : spSign.getSelectedItemPosition();
+
+					// Simpan Multi-Target Platform
+					config.targetDevices.clear();
+					if (cbPlatV3.isChecked())    config.targetDevices.add(new SisPackageInfo.DependencyItem(0x101F7961, 0, 0, 0, "Series60ProductID"));
+					if (cbPlatFp1.isChecked())   config.targetDevices.add(new SisPackageInfo.DependencyItem(0x102032BE, 0, 0, 0, "Series60ProductID"));
+					if (cbPlatFp2.isChecked())   config.targetDevices.add(new SisPackageInfo.DependencyItem(0x102752AE, 0, 0, 0, "Series60ProductID"));
+					if (cbPlatV5.isChecked())    config.targetDevices.add(new SisPackageInfo.DependencyItem(0x1028315F, 0, 0, 0, "Series60ProductID"));
+					if (cbPlatSym3.isChecked())  config.targetDevices.add(new SisPackageInfo.DependencyItem(0x20022E6D, 0, 0, 0, "S60ProductID"));
+					if (cbPlatBelle.isChecked()) config.targetDevices.add(new SisPackageInfo.DependencyItem(0x20032DE7, 0, 0, 0, "S60ProductID"));
+					if (!config.targetDevices.isEmpty()) {
+						config.targetPlatformUid = config.targetDevices.get(0).uid;
+					}
+
+					// Simpan Software Dependencies
+					config.dependencies.clear();
+					if (cbDepQt.isChecked())    config.dependencies.add(new SisPackageInfo.DependencyItem(0x2001E61C, 4, 7, 4, "Qt"));
+					if (cbDepQtMob.isChecked()) config.dependencies.add(new SisPackageInfo.DependencyItem(0x2002AC89, 1, 2, 0, "QtMobility"));
+					if (cbDepOpenC.isChecked()) config.dependencies.add(new SisPackageInfo.DependencyItem(0x20009A80, 1, 6, 0, "OpenC"));
 
 					if (listener != null) listener.onConfigSaved(config);
 					dialog.dismiss();
 				}
 			});
+		
 		root.setOnClickListener(new View.OnClickListener(){
 			public void onClick(View v){
 				

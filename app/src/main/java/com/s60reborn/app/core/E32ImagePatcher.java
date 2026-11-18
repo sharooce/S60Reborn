@@ -18,9 +18,10 @@ public class E32ImagePatcher {
         "ReadUserData", "WriteUserData", "Location", "SurroundingsDD", "UserEnvironment"
     };
 
+    // 5 Basic Capabilities yang diizinkan untuk Self-Signed tanpa DevCert
     public static final int MASK_SELF_SIGNED_SAFE =
-	(1 << 13) | (1 << 14) | (1 << 15) | (1 << 16) | (1 << 17) | (1 << 19); // 6 User Caps
-    public static final int MASK_ALL_20_CAPS = 0x000FFFFF; // All - TCB (20 Caps)
+	(1 << 13) | (1 << 14) | (1 << 15) | (1 << 16) | (1 << 19);
+    public static final int MASK_ALL_20_CAPS = 0x000FFFFF;
 
     public static class E32Info {
         public boolean isValidE32;
@@ -43,22 +44,25 @@ public class E32ImagePatcher {
         if (data[16] != 'E' || data[17] != 'P' || data[18] != 'O' || data[19] != 'C') return info;
 
         ByteBuffer b = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
-        info.isValidE32 = true;
-        info.uid1 = b.getInt(0x00);
-        info.uid2 = b.getInt(0x04);
-        info.uid3 = b.getInt(0x08);
-        info.stackSize = b.getInt(0x34);
-        info.heapMin = b.getInt(0x38);
-        info.heapMax = b.getInt(0x3C);
-        info.secureId = b.getInt(0x78);
-        info.vendorId = b.getInt(0x7C);
-        info.capabilities = b.getInt(0x80);
+        info.isValidE32   = true;
+        info.uid1         = b.getInt(0x00);
+        info.uid2         = b.getInt(0x04);
+        info.uid3         = b.getInt(0x08);
+
+        // Offset standar E32ImageHeader & E32ImageHeaderV (Symbian OS 9.x / EKA2)
+        info.heapMin      = b.getInt(0x40);
+        info.heapMax      = b.getInt(0x44);
+        info.stackSize    = b.getInt(0x48);
+		info.secureId     = b.getInt(0x80);
+        info.vendorId     = b.getInt(0x84);
+        info.capabilities = b.getInt(0x88);
+		
         return info;
     }
 
     /**
-     * Memodifikasi Capabilities, SecureID, dan HeapMax pada file .exe / .dll Symbian OS 9.x
-     * serta memperbarui Header CRC32 (offset 0x14) agar executable valid.
+     * Memodifikasi Capabilities (0x8C), SecureID (0x84), dan HeapMax (0x44) pada file .exe / .dll Symbian OS 9.x
+     * serta memperbarui Header CRC32 (offset 0x18) agar executable valid.
      */
     public static void patchE32File(File exeFile, Integer newCaps, Integer newSid, Integer newHeapMax) throws IOException {
         byte[] data = readAllBytes(exeFile);
@@ -68,21 +72,23 @@ public class E32ImagePatcher {
 
         ByteBuffer b = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
         if (newHeapMax != null && newHeapMax > 0) {
-            b.putInt(0x3C, newHeapMax);
+            b.putInt(0x44, newHeapMax);
         }
-        if (newSid != null && newSid != 0) {
-            b.putInt(0x78, newSid);
+		if (newSid != null && newSid != 0) {
+            b.putInt(0x80, newSid);
         }
         if (newCaps != null) {
-            b.putInt(0x80, newCaps);
+            b.putInt(0x88, newCaps);
+            b.putInt(0x8C, 0);
         }
+		
 
-        // Hitung ulang Header CRC32 E32Image (dengan field CRC di 0x14 dinolkan sementara)
-        int codeOffset = b.getInt(0x28);
+        // Hitung ulang Header CRC32 E32Image (offset 0x18 = iHeaderCrc, 0x6C = iCodeOffset)
+        int codeOffset = b.getInt(0x6C);
         if (codeOffset >= 0x9C && codeOffset <= data.length) {
-            b.putInt(0x14, 0);
+            b.putInt(0x18, 0);
             int crc = computeSymbianHeaderCrc(data, codeOffset);
-            b.putInt(0x14, crc);
+            b.putInt(0x18, crc);
         }
 
         FileOutputStream fos = new FileOutputStream(exeFile);
@@ -91,6 +97,25 @@ public class E32ImagePatcher {
         } finally {
             fos.close();
         }
+    }
+
+    public static byte[] patchE32Bytes(byte[] rawData, int newCaps) {
+        if (rawData == null || rawData.length < 0x9C ||
+            rawData[16] != 'E' || rawData[17] != 'P' || rawData[18] != 'O' || rawData[19] != 'C') {
+            return rawData;
+        }
+        byte[] data = rawData.clone();
+        ByteBuffer b = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        b.putInt(0x8C, newCaps);
+        b.putInt(0x90, 0);
+
+        int codeOffset = b.getInt(0x6C);
+        if (codeOffset >= 0x9C && codeOffset <= data.length) {
+            b.putInt(0x18, 0);
+            int crc = computeSymbianHeaderCrc(data, codeOffset);
+            b.putInt(0x18, crc);
+        }
+        return data;
     }
 
     private static int computeSymbianHeaderCrc(byte[] header, int len) {

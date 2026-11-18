@@ -19,17 +19,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.Inflater;
+import com.s60reborn.app.model.*;
 
 public class SisxCoreParser {
     public static File dirPath;
     private static List<List<byte[]>> activeDataUnits;
     private static List<EmbeddedSisInfo> extractedEmbeddedList = new ArrayList<EmbeddedSisInfo>();
+	public static boolean recursiveEmbedded = false;
 
     public interface ParserLogger {
         void onLog(String message);
     }
 
-    public static SisPackageInfo inspectSisx(File sisFile) throws Exception {
+    public static SisPackageInfo inspectSisx(File sisFile,String activeCondition) throws Exception {
         byte[] fileBytes = readAllBytes(sisFile);
         if (fileBytes.length < 20) throw new IOException("File terlalu kecil.");
         ByteBuffer buf = ByteBuffer.wrap(fileBytes).order(ByteOrder.LITTLE_ENDIAN);
@@ -37,14 +39,16 @@ public class SisxCoreParser {
         int uid2 = buf.getInt(4);
 
         if (uid1 == SisField.SISX_UID1_MAGIC) {
-            return parseModernSisx(fileBytes, null, false);
+            return parseModernSisx(fileBytes, null, false,activeCondition);
         } else if (uid2 == SisField.LEGACY_SIS_UID2_MAGIC) {
             return unpackLegacySis(fileBytes, null);
         }
         throw new IOException("Format file tidak dikenali (UID1=0x" + Integer.toHexString(uid1) + ").");
     }
+	
 
-    public static SisPackageInfo unpackSisx(File sisFile, File outputDir) throws Exception {
+
+    public static SisPackageInfo unpackSisx(File sisFile, File outputDir,String activeCondition) throws Exception {
         dirPath = outputDir;
         extractedEmbeddedList.clear();
         byte[] fileBytes = readAllBytes(sisFile);
@@ -56,14 +60,14 @@ public class SisxCoreParser {
         if (outputDir != null && !outputDir.exists()) outputDir.mkdirs();
 
         if (uid1 == SisField.SISX_UID1_MAGIC) {
-            return parseModernSisx(fileBytes, outputDir, true);
+            return parseModernSisx(fileBytes, outputDir, true,activeCondition);
         } else if (uid2 == SisField.LEGACY_SIS_UID2_MAGIC) {
             return unpackLegacySis(fileBytes, outputDir);
         }
         throw new IOException("Format file tidak dikenali.");
     }
 
-    private static SisPackageInfo parseModernSisx(byte[] fileBytes, File outputDir, boolean writeToDisk) throws Exception {
+    private static SisPackageInfo parseModernSisx(byte[] fileBytes, File outputDir, boolean writeToDisk,String activeCondition) throws Exception {
         dirPath = outputDir;
         extractedEmbeddedList.clear();
         ByteBuffer buf = ByteBuffer.wrap(fileBytes).order(ByteOrder.LITTLE_ENDIAN);
@@ -139,7 +143,7 @@ public class SisxCoreParser {
         // 3. Parse seluruh tree SISController (termasuk IF/ELSEIF & Sub-Controller)
         List<EntryWithUnit> parsedEntries = new ArrayList<EntryWithUnit>();
         ByteBuffer ctrlBuf = ByteBuffer.wrap(rawController).order(ByteOrder.LITTLE_ENDIAN);
-        parseControllerRecursive(ctrlBuf, info, parsedEntries, 0, true);
+        parseControllerRecursive(ctrlBuf, info, parsedEntries, 0, true,activeCondition);
 
         // Warisi AppName/VendorName dari Embedded SIS pertama jika paket induk adalah wrapper tanpa nama
         if (!extractedEmbeddedList.isEmpty()) {
@@ -208,9 +212,13 @@ public class SisxCoreParser {
 
         if (writeToDisk && outputDir != null) {
             generatePkgScript(info, new File(outputDir, "project.pkg"));
+			SisProjectConfig config = new SisProjectConfig();
+			SisProjectConfig.syncConfigFromUnpackedInfo(info, config);
+			config.saveToFile(outputDir);
         }
 
         return info;
+	
     }
 
     /**
@@ -333,7 +341,7 @@ public class SisxCoreParser {
     }
 
     private static void parseControllerRecursive(
-		ByteBuffer buf, SisPackageInfo info, List<EntryWithUnit> outEntries, int defaultUnitIdx, boolean isRoot) {
+		ByteBuffer buf, SisPackageInfo info, List<EntryWithUnit> outEntries, int defaultUnitIdx, boolean isRoot,String activeCondition) {
         int startPos = buf.position();
         int limitPos = buf.limit();
         int currentDataUnit = defaultUnitIdx;
@@ -389,7 +397,7 @@ public class SisxCoreParser {
                 parseIfBlockWithCondition(buf, (int) len, info, outEntries, currentDataUnit, null);
             } else if (type == SisField.FIELD_CONTROLLER || type == 13) {
                 buf.position(fStart);
-                parseEmbeddedController(buf, (int) len, info, outEntries, currentDataUnit + 1);
+                parseEmbeddedController(buf, (int) len, info, outEntries, currentDataUnit + 1,activeCondition);
             } else if (type == SisField.FIELD_SIGNATURES || type == SisField.FIELD_SIGNATURE_CERT_CHAIN || type == 39) {
                 buf.position(fStart - 8);
                 List<ExtractedCertInfo> certs = extractAllCertificates(buf, fStart + (int) len, info, dirPath);
@@ -397,12 +405,90 @@ public class SisxCoreParser {
                     info.isSigned = true;
                     info.signerInfo = "Signed (" + certs.size() + " .cer): " + certs.get(0).subject;
                 }
-            }
+			} else if (type == SisField.FIELD_PREREQUISITES || type == 17) {
+                buf.position(fStart);
+                parsePrerequisitesBlock(buf, (int) len, info);
+			}
 
             buf.position(fStart + (int) len);
             align4(buf);
         }
     }
+	
+	private static void parsePrerequisitesBlock(ByteBuffer buf, int len, SisPackageInfo info) {
+        int end = buf.position() + len;
+        int arrayIdx = 0;
+
+        while (buf.position() + 8 <= end) {
+            int type = buf.getInt();
+            long fLen = readEkaLength(buf);
+            int fStart = buf.position();
+            if (fLen < 0 || fStart + fLen > end) break;
+
+            if (type == SisField.FIELD_ARRAY && fLen >= 4) {
+                int arrEnd = fStart + (int) fLen;
+                int elemType = buf.getInt();
+                if (elemType == SisField.FIELD_DEPENDENCY || elemType == 18) {
+                    while (buf.position() + 4 <= arrEnd) {
+                        long itemLen = readEkaLength(buf);
+                        int itemStart = buf.position();
+                        if (itemLen < 0 || itemStart + itemLen > arrEnd) break;
+
+                        ByteBuffer itemBuf = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+                        itemBuf.position(itemStart);
+                        itemBuf.limit(itemStart + (int) itemLen);
+                        SisPackageInfo.DependencyItem dep = parseSingleDependencyItem(itemBuf);
+                        if (dep != null) {
+                            if (arrayIdx == 0) {
+                                info.targetDevices.add(dep);
+                            } else {
+                                info.dependencies.add(dep);
+                            }
+                        }
+
+                        buf.position(itemStart + (int) itemLen);
+                        align4(buf);
+                    }
+                }
+                arrayIdx++;
+            }
+            buf.position(fStart + (int) fLen);
+            align4(buf);
+        }
+        buf.position(end);
+    }
+
+    private static SisPackageInfo.DependencyItem parseSingleDependencyItem(ByteBuffer buf) {
+        int uid = 0;
+        int maj = 0, min = 0, bld = 0;
+        String name = "";
+
+        while (buf.remaining() >= 8) {
+            int tag = buf.getInt();
+            long len = readEkaLength(buf);
+            int start = buf.position();
+            if (len < 0 || start + len > buf.limit()) break;
+
+            if (tag == SisField.FIELD_UID && len >= 4) {
+                uid = buf.getInt();
+            } else if (tag == SisField.FIELD_VERSION_RANGE && len >= 8) {
+                int vTag = buf.getInt();
+                long vLen = readEkaLength(buf);
+                if (vTag == SisField.FIELD_VERSION && vLen >= 12 && buf.remaining() >= 12) {
+                    maj = buf.getInt();
+                    min = buf.getInt();
+                    bld = buf.getInt();
+                }
+            } else if (tag == SisField.FIELD_ARRAY && len >= 8) {
+                String extracted = extractFirstStringFromBlock(buf.duplicate().order(ByteOrder.LITTLE_ENDIAN));
+                if (extracted != null) name = extracted;
+            }
+            buf.position(start + (int) len);
+            align4(buf);
+        }
+        return (uid != 0) ? new SisPackageInfo.DependencyItem(uid, maj, min, bld, name) : null;
+    }
+	
 
     private static List<String> parseSupportedOptions(ByteBuffer buf, int len) {
         List<String> options = new ArrayList<String>();
@@ -466,46 +552,83 @@ public class SisxCoreParser {
         return null;
     }
 
-    private static void parseEmbeddedController(ByteBuffer buf, int len, SisPackageInfo info, List<EntryWithUnit> outEntries, int fallbackUnitIdx) {
-        if (len <= 8 || buf.remaining() < len) return;
-        byte[] slice = new byte[len];
-        buf.get(slice);
-        try {
-            byte[] rawSubCtrl = extractRawSubController(slice);
-            if (rawSubCtrl == null) rawSubCtrl = slice;
-            rawSubCtrl = unwrapOuterControllerWrapper(rawSubCtrl);
+    private static void parseEmbeddedController(ByteBuffer buf, int len, SisPackageInfo info, List<EntryWithUnit> outEntries, int fallbackUnitIdx, String activeCondition) {
+		if (len <= 8 || buf.remaining() < len) return;
+		byte[] slice = new byte[len];
+		buf.get(slice);
+		try {
+			byte[] rawSubCtrl = extractRawSubController(slice);
+			if (rawSubCtrl == null) rawSubCtrl = slice;
+			rawSubCtrl = unwrapOuterControllerWrapper(rawSubCtrl);
 
-            ByteBuffer subBuf = ByteBuffer.wrap(rawSubCtrl).order(ByteOrder.LITTLE_ENDIAN);
-            SisPackageInfo subInfo = new SisPackageInfo();
+			ByteBuffer subBuf = ByteBuffer.wrap(rawSubCtrl).order(ByteOrder.LITTLE_ENDIAN);
+			SisPackageInfo subInfo = new SisPackageInfo();
 
-            int beforeCount = outEntries.size();
-            parseControllerRecursive(subBuf, subInfo, outEntries, fallbackUnitIdx, false);
+			// 1. GUNAKAN LIST TERPISAH AGAR TIDAK LANGSUNG BOCOR KE outEntries UTAMA
+			List<EntryWithUnit> subEntries = new ArrayList<EntryWithUnit>();
+			parseControllerRecursive(subBuf, subInfo, subEntries, fallbackUnitIdx, false, activeCondition);
 
-            int actualUnitIdx = fallbackUnitIdx;
-            if (outEntries.size() > beforeCount) {
-                actualUnitIdx = outEntries.get(beforeCount).dataUnitIndex;
-            }
+			int actualUnitIdx = fallbackUnitIdx;
+			if (!subEntries.isEmpty()) {
+				actualUnitIdx = subEntries.get(0).dataUnitIndex;
+			}
 
-            if (dirPath != null && activeDataUnits != null
+			EmbeddedSisInfo embInfo = null;
+			if (dirPath != null && activeDataUnits != null
 				&& actualUnitIdx >= 0 && actualUnitIdx < activeDataUnits.size()) {
-                EmbeddedSisInfo embInfo = rebuildAndSaveEmbeddedSis(
+				embInfo = rebuildAndSaveEmbeddedSis(
 					rawSubCtrl,
 					activeDataUnits.get(actualUnitIdx),
 					dirPath,
-					extractedEmbeddedList.size() + 1
-                );
-                if (embInfo != null) {
-                    extractedEmbeddedList.add(embInfo);
-                }
-            } else if (!isPlaceholderOrEmpty(subInfo.appName)) {
-                EmbeddedSisInfo embInfo = new EmbeddedSisInfo();
-                embInfo.appName = subInfo.appName;
-                embInfo.vendorName = subInfo.vendorName;
-                embInfo.uidHex = String.format("0x%08X", subInfo.uid3);
-                extractedEmbeddedList.add(embInfo);
-            }
-        } catch (Exception ignored) {}
-    }
+					extractedEmbeddedList.size() + 1,
+					activeCondition
+				);
+			}
+
+			if (embInfo != null) {
+				extractedEmbeddedList.add(embInfo);
+
+				if (!recursiveEmbedded) {
+					// 2. MODE STANDAR: SKIP subEntries, JANGAN masukkan ke outEntries induk!
+					// Cukup buat 1 baris referensi ke folder embedded_sis/
+					String rawName = subInfo.appName;
+					if (isPlaceholderOrEmpty(rawName) || "EPOC".equalsIgnoreCase(rawName.trim())) {
+						rawName = "embedded_pkg_" + extractedEmbeddedList.size();
+					}
+					String cleanName = rawName.trim().replaceAll("[^a-zA-Z0-9._-]", "_");
+					String uidHex = String.format("0x%08X", subInfo.uid3);
+					String sisFileName = embInfo.savedSisFile != null ? embInfo.savedSisFile.getName() : (cleanName + "_" + uidHex + ".sisx");
+
+					SisFileEntry embRef = new SisFileEntry();
+					embRef.isEmbeddedSis = true;
+					embRef.embeddedUid3 = subInfo.uid3;
+					embRef.ifCondition = activeCondition;
+					embRef.localRelPath = "embedded_sis/" + sisFileName;
+					embRef.targetPath = embRef.localRelPath;
+					embRef.uncompressedSize = (embInfo.savedSisFile != null) ? embInfo.savedSisFile.length() : 0;
+
+					outEntries.add(new EntryWithUnit(embRef, actualUnitIdx));
+				} else {
+					// 3. MODE REKURSIF (Ceklis): Bongkar seluruh isi sub-paket ke proyek utama
+					for (EntryWithUnit se : subEntries) {
+						if (se.entry.ifCondition == null || se.entry.ifCondition.isEmpty()) {
+							se.entry.ifCondition = activeCondition;
+						}
+					}
+					outEntries.addAll(subEntries);
+				}
+			} else {
+				// Fallback jika sub-paket gagal disimpan sebagai .sisx mandiri, masukkan subEntries
+				for (EntryWithUnit se : subEntries) {
+					if (se.entry.ifCondition == null || se.entry.ifCondition.isEmpty()) {
+						se.entry.ifCondition = activeCondition;
+					}
+				}
+				outEntries.addAll(subEntries);
+			}
+		} catch (Exception ignored) {}
+	}
+	
 
     /**
      * Mem-parse blok kondisi SISIf (Tag 26/28) dan SISElseIf (Tag 27/29).
@@ -513,7 +636,7 @@ public class SisxCoreParser {
      * - SISIf berisi: [Expression (32)], [InstallBlock (23)], [Array of ElseIf (2 -> 29)]
      * - SISElseIf berisi: [Expression (32)], [InstallBlock (23)]
      */
-    private static void parseIfBlockWithCondition(
+	private static void parseIfBlockWithCondition(
 		ByteBuffer buf, int len, SisPackageInfo info, List<EntryWithUnit> outEntries, int unitIdx, String parentCondition) {
         int end = buf.position() + len;
         String currentCondition = parentCondition;
@@ -524,7 +647,7 @@ public class SisxCoreParser {
             int fStart = buf.position();
             if (fLen < 0 || fStart + fLen > end) break;
 
-            if (type == 32) { // SISExpression pada skema Symbian 9.x
+            if (type == 32) { // HANYA Tag 32 = SISExpression
                 ByteBuffer exprBuf = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
                 exprBuf.position(fStart);
                 exprBuf.limit(fStart + (int) fLen);
@@ -538,7 +661,8 @@ public class SisxCoreParser {
                 currentCondition = readUtf16String(buf, (int) fLen);
             } else if (type == SisField.FIELD_INSTALL_BLOCK || type == 19 || type == 23) {
                 buf.position(fStart);
-                parseInstallBlock(buf, (int) fLen, info, outEntries, unitIdx, currentCondition);
+                String condToUse = (currentCondition != null && !currentCondition.isEmpty()) ? currentCondition : "1";
+                parseInstallBlock(buf, (int) fLen, info, outEntries, unitIdx, condToUse);
             } else if (type == SisField.FIELD_ARRAY || type == 2) {
                 buf.position(fStart);
                 parseTypedArray(buf, (int) fLen, info, outEntries, unitIdx, parentCondition);
@@ -549,32 +673,70 @@ public class SisxCoreParser {
                 buf.position(fStart);
                 SisFileEntry entry = parseFileDescription(buf, (int) fLen);
                 if (entry != null) {
-                    entry.ifCondition = currentCondition;
+                    entry.ifCondition = (currentCondition != null && !currentCondition.isEmpty()) ? currentCondition : "1";
                     outEntries.add(new EntryWithUnit(entry, unitIdx));
                 }
-            } else if (type == SisField.FIELD_CONTROLLER || type == 13) {
+			} else if (type == SisField.FIELD_CONTROLLER || type == 13) {
                 buf.position(fStart);
-                parseEmbeddedController(buf, (int) fLen, info, outEntries, unitIdx + 1);
+                parseEmbeddedController(buf, (int) fLen, info, outEntries, unitIdx + 1, currentCondition);
             }
+			
 
             buf.position(fStart + (int) fLen);
             align4(buf);
         }
         buf.position(end);
     }
+	
 
     private static String decodeExpressionToPkg(ByteBuffer buf) {
+        int start = buf.position();
         int end = buf.limit();
+        if (end - start < 8) return "";
+
+        // Di Symbian 9.x (EKA2L1), SISExpression diawali 8 byte header: [operator (int32)] [integerValue (int32)]
+        // lalu diikuti sub-TLV opsional (FIELD_STRING atau sub-SISExpression)
+        int op = buf.getInt();
+        int intVal = buf.getInt();
+
+        // Validasi apakah op adalah operator Symbian valid (1..17). Jika tidak, fallback baca TLV dari awal.
+        if (op < 1 || op > 17) {
+            buf.position(start);
+            List<String> subExprs = new ArrayList<String>();
+            String strVal = "";
+            while (buf.position() + 8 <= end) {
+                int tag = buf.getInt();
+                long len = readEkaLength(buf);
+                int s = buf.position();
+                if (len < 0 || s + len > end) break;
+                if (tag == 30 || tag == 31 || tag == 32 || tag == 28) {
+                    ByteBuffer sub = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+                    sub.position(s);
+                    sub.limit(s + (int) len);
+                    subExprs.add(decodeExpressionToPkg(sub));
+                } else if (tag == SisField.FIELD_STRING && len > 0) {
+                    strVal = readUtf16String(buf, (int) len);
+                }
+                buf.position(s + (int) len);
+                align4(buf);
+            }
+            if (buf.remaining() >= 8) {
+                op = buf.getInt();
+                intVal = buf.getInt();
+                return formatSymbianOp(op, intVal, strVal, subExprs);
+            }
+            return !strVal.isEmpty() ? "\"" + strVal + "\"" : "";
+        }
+
         List<String> subExprs = new ArrayList<String>();
         String strVal = "";
-
         while (buf.position() + 8 <= end) {
             int tag = buf.getInt();
             long len = readEkaLength(buf);
             int s = buf.position();
             if (len < 0 || s + len > end) break;
 
-            if (tag == 32 || tag == 28) {
+            if (tag == 30 || tag == 31 || tag == 32 || tag == 28) {
                 ByteBuffer sub = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
                 sub.position(s);
                 sub.limit(s + (int) len);
@@ -586,33 +748,35 @@ public class SisxCoreParser {
             align4(buf);
         }
 
-        if (buf.remaining() >= 8) {
-            int op = buf.getInt();
-            int intVal = buf.getInt();
-            String left = subExprs.size() > 0 ? subExprs.get(0) : "";
-            String right = subExprs.size() > 1 ? subExprs.get(1) : "";
-
-            switch (op) {
-                case 1:  return "(" + left + " = " + right + ")";
-                case 2:  return "(" + left + " <> " + right + ")";
-                case 3:  return "(" + left + " > " + right + ")";
-                case 4:  return "(" + left + " < " + right + ")";
-                case 5:  return "(" + left + " >= " + right + ")";
-                case 6:  return "(" + left + " <= " + right + ")";
-                case 7:  return "(" + left + " AND " + right + ")";
-                case 8:  return "(" + left + " OR " + right + ")";
-                case 9:  return "NOT " + left;
-                case 11: return "EXISTS(\"" + (!strVal.isEmpty() ? strVal : left.replace("\"", "")) + "\")";
-                case 12: return "APPPROP(" + left + ", " + right + ")";
-                case 13: return "PACKAGE(" + (left.isEmpty() ? String.format("0x%08X", intVal) : left) + ")";
-                case 14: return "option" + (intVal + 1);
-                case 15: return String.format("VAR_0x%X", intVal);
-                case 16: return String.format("0x%X", intVal);
-                case 17: return "\"" + strVal + "\"";
-            }
-        }
-        return !strVal.isEmpty() ? "\"" + strVal + "\"" : "1";
+        return formatSymbianOp(op, intVal, strVal, subExprs);
     }
+
+    private static String formatSymbianOp(int op, int intVal, String strVal, List<String> subExprs) {
+        String left = subExprs.size() > 0 ? subExprs.get(0) : "";
+        String right = subExprs.size() > 1 ? subExprs.get(1) : "";
+
+        switch (op) {
+            case 1:  return "(" + left + " = " + right + ")";
+            case 2:  return "(" + left + " <> " + right + ")";
+            case 3:  return "(" + left + " > " + right + ")";
+            case 4:  return "(" + left + " < " + right + ")";
+            case 5:  return "(" + left + " >= " + right + ")";
+            case 6:  return "(" + left + " <= " + right + ")";
+            case 7:  return "(" + left + " AND " + right + ")";
+            case 8:  return "(" + left + " OR " + right + ")";
+            case 9:  return "NOT " + left;
+            case 10: return "EXISTS(\"" + (!strVal.isEmpty() ? strVal : left.replace("\"", "")) + "\")";
+            case 11: return "EXISTS(\"" + (!strVal.isEmpty() ? strVal : left.replace("\"", "")) + "\")";
+            case 12: return "APPPROP(" + left + ", " + right + ")";
+            case 13: return "PACKAGE(" + (left.isEmpty() ? String.format("0x%08X", intVal) : left) + ")";
+            case 14: return "option" + (intVal + 1);
+            case 15: return String.format("VAR_0x%X", intVal);
+            case 16: return String.format("0x%X", intVal);
+            case 17: return "\"" + strVal + "\"";
+            default: return !strVal.isEmpty() ? "\"" + strVal + "\"" : "";
+        }
+    }
+	
 
     private static void parseInstallBlock(
 		ByteBuffer buf, int len, SisPackageInfo info, List<EntryWithUnit> outEntries, int unitIdx, String activeCondition) {
@@ -641,7 +805,7 @@ public class SisxCoreParser {
                 parseIfBlockWithCondition(buf, (int) fLen, info, outEntries, unitIdx, activeCondition);
             } else if (type == SisField.FIELD_CONTROLLER || type == 13) {
                 buf.position(fStart);
-                parseEmbeddedController(buf, (int) fLen, info, outEntries, unitIdx + 1);
+                parseEmbeddedController(buf, (int) fLen, info, outEntries, unitIdx + 1,activeCondition);
             }
 
             buf.position(fStart + (int) fLen);
@@ -649,6 +813,35 @@ public class SisxCoreParser {
         }
         buf.position(end);
     }
+	
+	/**
+     * Mengekstrak satu file spesifik dari file .sisx ke disk tanpa unpack seluruh proyek.
+     */
+    public static boolean extractSingleFileFromSisx(File sisFile, SisFileEntry targetEntry, File outputFile) {
+        try {
+            byte[] fileBytes = targetEntry.rawData;
+            if (fileBytes == null || fileBytes.length == 0) {
+                // Jika rawData kosong, coba parse ulang secara cepat dari sisFile
+                byte[] allBytes = readAllBytes(sisFile);
+                // (Opsional: Anda bisa memparsing ulang data unit terkait jika rawData belum dimuat)
+                return false;
+            }
+
+            File parentDir = outputFile.getParentFile();
+            if (parentDir != null && !parentDir.exists()) {
+                parentDir.mkdirs();
+            }
+
+            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                fos.write(fileBytes);
+            }
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+	
 
     private static void parseTypedArray(
 		ByteBuffer buf, int len, SisPackageInfo info, List<EntryWithUnit> outEntries, int unitIdx, String activeCondition) {
@@ -678,7 +871,7 @@ public class SisxCoreParser {
             } else if (elemType == SisField.FIELD_CONTROLLER || elemType == 13) {
                 buf.position(itemStart);
                 embeddedCounter++;
-                parseEmbeddedController(buf, (int) itemLen, info, outEntries, unitIdx + embeddedCounter);
+                parseEmbeddedController(buf, (int) itemLen, info, outEntries, unitIdx + embeddedCounter,activeCondition);
             }
 
             buf.position(itemStart + (int) itemLen);
@@ -772,7 +965,17 @@ public class SisxCoreParser {
                     info.minorVersion = buf.getInt();
                     info.buildVersion = buf.getInt();
                 }
+			} else if (type == SisField.FIELD_DATE_TIME) {
+                buf.position(fStart + (int) fLen);
+                align4(buf);
+                // Tepat setelah FIELD_DATE_TIME, tersisa 2 byte: installType & installFlags
+                if (end - buf.position() >= 2) {
+                    info.installType = buf.get() & 0xFF;
+                    info.installFlags = buf.get() & 0xFF;
+                }
+                break;
             }
+			
 
             buf.position(fStart + (int) fLen);
             align4(buf);
@@ -1040,35 +1243,59 @@ public class SisxCoreParser {
             }
         }
 
-        if (outputDir != null && !info.files.isEmpty()) {
-            generatePkgScript(info, new File(outputDir, "project.pkg"));
-        }
+		if (outputDir != null && !info.files.isEmpty()) {
+			generatePkgScript(info, new File(outputDir, "project.pkg"));
+			SisProjectConfig legacyCfg = new SisProjectConfig();
+			SisProjectConfig.syncConfigFromUnpackedInfo(info, legacyCfg);
+			legacyCfg.saveToFile(outputDir);
+		}
+		
         return info;
     }
 
-    public static void generatePkgScript(SisPackageInfo info, File pkgFile) throws IOException {
+	public static void generatePkgScript(SisPackageInfo info, File pkgFile) throws IOException {
+        String[] typeNames = { "SA", "SP", "PU", "PA", "PP" };
+        String pkgType = (info.installType >= 0 && info.installType < typeNames.length)
+            ? typeNames[info.installType] : "SA";
+
         StringBuilder sb = new StringBuilder();
         sb.append("; Auto-generated by S60Reborn\n");
         sb.append("&EN\n\n");
         sb.append("#{\"").append(info.appName).append("\"},(")
-			.append(info.getFormattedUid3()).append("),")
-			.append(info.getFormattedVersion()).append(",TYPE=SA\n\n");
+            .append(info.getFormattedUid3()).append("),")
+            .append(info.getFormattedVersion()).append(",TYPE=").append(pkgType).append("\n\n");
         sb.append("%{\"").append(info.vendorName).append("\"}\n");
         sb.append(":\"").append(info.vendorName).append("\"\n\n");
+
         sb.append("; Target Platform\n");
-        sb.append("[0x101F7961], 0, 0, 0, {\"Series60ProductID\"}\n\n");
+        if (info.targetDevices != null && !info.targetDevices.isEmpty()) {
+            for (SisPackageInfo.DependencyItem dev : info.targetDevices) {
+                String dName = (dev.name != null && !dev.name.isEmpty()) ? dev.name : "Series60ProductID";
+                sb.append(String.format("[0x%08X], %d, %d, %d, {\"%s\"}\n",
+										dev.uid, dev.major, dev.minor, dev.build, dName));
+            }
+        } else {
+            sb.append("[0x101F7961], 0, 0, 0, {\"Series60ProductID\"}\n");
+        }
+        sb.append("\n");
+
+        if (info.dependencies != null && !info.dependencies.isEmpty()) {
+            sb.append("; Software Dependencies\n");
+            for (SisPackageInfo.DependencyItem dep : info.dependencies) {
+                String dName = (dep.name != null && !dep.name.isEmpty()) ? dep.name : "Dependency";
+                sb.append(String.format("(0x%08X), %d, %d, %d, {\"%s\"}\n",
+										dep.uid, dep.major, dep.minor, dep.build, dName));
+            }
+            sb.append("\n");
+        }
+
         sb.append("; Files & Conditional Blocks\n");
-
         String lastCondition = null;
-
         for (SisFileEntry f : info.files) {
             String winRelPath = f.localRelPath.replace('/', '\\');
-
             if (f.ifCondition != null && !f.ifCondition.isEmpty()) {
                 if (!f.ifCondition.equals(lastCondition)) {
-                    if (lastCondition != null) {
-                        sb.append("ENDIF\n");
-                    }
+                    if (lastCondition != null) sb.append("ENDIF\n");
                     sb.append("IF ").append(f.ifCondition).append("\n");
                     lastCondition = f.ifCondition;
                 }
@@ -1076,20 +1303,17 @@ public class SisxCoreParser {
                 sb.append("ENDIF\n");
                 lastCondition = null;
             }
-
             String indent = (lastCondition != null) ? "    " : "";
             sb.append(indent).append("\"").append(winRelPath).append("\"-\"")
-				.append(f.targetPath).append("\"\n");
+                .append(f.targetPath).append("\"\n");
         }
-
-        if (lastCondition != null) {
-            sb.append("ENDIF\n");
-        }
+        if (lastCondition != null) sb.append("ENDIF\n");
 
         try (FileOutputStream fos = new FileOutputStream(pkgFile)) {
             fos.write(sb.toString().getBytes(StandardCharsets.UTF_8));
         }
     }
+	
 
     private static long readEkaLength(ByteBuffer buf) {
         if (buf.remaining() < 4) return -1;
@@ -1146,8 +1370,8 @@ public class SisxCoreParser {
         public File savedFile;
     }
 
-    public static List<ExtractedCertInfo> extractAllCertificates(
-		ByteBuffer ctrlBuf, int endLimit, SisPackageInfo info, File outputDir) {
+	public static List<ExtractedCertInfo> extractAllCertificates(
+        ByteBuffer ctrlBuf, int endLimit, SisPackageInfo info, File outputDir) {
         List<ExtractedCertInfo> certList = new ArrayList<ExtractedCertInfo>();
         try {
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
@@ -1159,36 +1383,11 @@ public class SisxCoreParser {
                 int fStart = ctrlBuf.position();
                 if (len < 0 || fStart + len > endLimit) break;
 
-                if ((tag == SisField.FIELD_SIGNATURES || tag == 39) && len >= 12) {
-                    int arrTag = ctrlBuf.getInt();
-                    long arrLen = readEkaLength(ctrlBuf);
-                    int arrEnd = ctrlBuf.position() + (int) arrLen;
-
-                    if (arrTag == SisField.FIELD_ARRAY && arrEnd <= fStart + len && ctrlBuf.remaining() >= 4) {
-                        int elemType = ctrlBuf.getInt();
-                        if (elemType == SisField.FIELD_SIGNATURE_CERT_CHAIN || elemType == 36 || elemType == 38) {
-                            while (ctrlBuf.position() + 4 <= arrEnd) {
-                                long chainLen = readEkaLength(ctrlBuf);
-                                int chainStart = ctrlBuf.position();
-                                if (chainLen <= 0 || chainStart + chainLen > arrEnd) break;
-
-                                ByteBuffer chainSlice = ctrlBuf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
-                                chainSlice.position(chainStart);
-                                chainSlice.limit(chainStart + (int) chainLen);
-
-                                parseSingleCertChain(chainSlice, chainCounter++, cf, info, outputDir, certList);
-
-                                ctrlBuf.position(chainStart + (int) chainLen);
-                                align4(ctrlBuf);
-                            }
-                        }
-                    }
-                } else if ((tag == SisField.FIELD_SIGNATURE_CERT_CHAIN || tag == 36 || tag == 38) && len >= 12) {
-                    ByteBuffer chainSlice = ctrlBuf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
-                    chainSlice.position(fStart);
-                    chainSlice.limit(fStart + (int) len);
-
-                    parseSingleCertChain(chainSlice, chainCounter++, cf, info, outputDir, certList);
+                if ((tag == SisField.FIELD_SIGNATURE_CERT_CHAIN || tag == 39) && len >= 12) {
+                    ByteBuffer directSlice = ctrlBuf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+                    directSlice.position(fStart);
+                    directSlice.limit(fStart + (int) len);
+                    parseSingleCertChain(directSlice, chainCounter++, cf, info, outputDir, certList);
                 }
 
                 ctrlBuf.position(fStart + (int) len);
@@ -1201,12 +1400,12 @@ public class SisxCoreParser {
     }
 
     private static void parseSingleCertChain(
-		ByteBuffer buf,
-		int chainIdx,
-		CertificateFactory cf,
-		SisPackageInfo info,
-		File outputDir,
-		List<ExtractedCertInfo> outList) throws Exception {
+        ByteBuffer buf,
+        int chainIdx,
+        CertificateFactory cf,
+        SisPackageInfo info,
+        File outputDir,
+        List<ExtractedCertInfo> outList) throws Exception {
 
         int end = buf.limit();
         while (buf.position() + 8 <= end) {
@@ -1215,14 +1414,14 @@ public class SisxCoreParser {
             int fStart = buf.position();
             if (len < 0 || fStart + len > end) break;
 
-            if ((tag == SisField.FIELD_CERTIFICATE_CHAIN || tag == 23 || tag == 37) && len >= 12) {
+            if ((tag == SisField.FIELD_CERTIFICATE_CHAIN || tag == 22 || tag == 23 || tag == 37 || tag == 42) && len >= 12) {
                 int arrTag = buf.getInt();
                 long arrLen = readEkaLength(buf);
                 int arrEnd = buf.position() + (int) arrLen;
 
                 if (arrTag == SisField.FIELD_ARRAY && arrEnd <= fStart + len && buf.remaining() >= 4) {
                     int elemType = buf.getInt();
-                    if (elemType == SisField.FIELD_BLOB || elemType == 3) {
+                    if (elemType == SisField.FIELD_BLOB || elemType == 37 || elemType == 3) {
                         int certIdx = 0;
                         while (buf.position() + 4 <= arrEnd) {
                             long certLen = readEkaLength(buf);
@@ -1233,7 +1432,7 @@ public class SisxCoreParser {
                             buf.get(certDer);
 
                             X509Certificate x509 = (X509Certificate) cf.generateCertificate(
-								new ByteArrayInputStream(certDer));
+                                new ByteArrayInputStream(certDer));
 
                             ExtractedCertInfo cInfo = new ExtractedCertInfo();
                             cInfo.chainIndex = chainIdx;
@@ -1246,8 +1445,11 @@ public class SisxCoreParser {
                                 File certDir = new File(outputDir, "certificates");
                                 if (!certDir.exists()) certDir.mkdirs();
                                 File outCer = new File(certDir, cInfo.fileName);
-                                try (FileOutputStream fos = new FileOutputStream(outCer)) {
+                                FileOutputStream fos = new FileOutputStream(outCer);
+                                try {
                                     fos.write(certDer);
+                                } finally {
+                                    fos.close();
                                 }
                                 cInfo.savedFile = outCer;
                             }
@@ -1270,7 +1472,49 @@ public class SisxCoreParser {
             align4(buf);
         }
     }
+	
+	
 
+
+    private static void saveAndRegisterCert(
+        byte[] certDer,
+        int chainIdx,
+        int certIdx,
+        CertificateFactory cf,
+        SisPackageInfo info,
+        File outputDir,
+        List<ExtractedCertInfo> outList) throws Exception {
+
+        X509Certificate x509 = (X509Certificate) cf.generateCertificate(
+            new ByteArrayInputStream(certDer));
+
+        ExtractedCertInfo cInfo = new ExtractedCertInfo();
+        cInfo.chainIndex = chainIdx;
+        cInfo.certIndex = certIdx;
+        cInfo.subject = x509.getSubjectX500Principal().getName();
+        cInfo.issuer = x509.getIssuerX500Principal().getName();
+        cInfo.fileName = "chain" + chainIdx + "_cert" + certIdx + ".cer";
+
+        if (outputDir != null) {
+            File certDir = new File(outputDir, "certificates");
+            if (!certDir.exists()) certDir.mkdirs();
+            File outCer = new File(certDir, cInfo.fileName);
+            FileOutputStream fos = new FileOutputStream(outCer);
+            try {
+                fos.write(certDer);
+            } finally {
+                fos.close();
+            }
+            cInfo.savedFile = outCer;
+        }
+
+        outList.add(cInfo);
+        info.isSigned = true;
+        if (outList.size() == 1) {
+            info.signerInfo = "Signed: " + cInfo.subject;
+        }
+    }
+	
     public static class EmbeddedSisInfo {
         public String appName;
         public String vendorName;
@@ -1301,12 +1545,12 @@ public class SisxCoreParser {
 		byte[] rawSubController,
 		List<byte[]> subUnitFiles,
 		File outputDir,
-		int embedIndex) {
+		int embedIndex,String activeCondition) {
         try {
             SisPackageInfo subInfo = new SisPackageInfo();
             List<EntryWithUnit> subEntries = new ArrayList<EntryWithUnit>();
             ByteBuffer subCtrlBuf = ByteBuffer.wrap(rawSubController).order(ByteOrder.LITTLE_ENDIAN);
-            parseControllerRecursive(subCtrlBuf, subInfo, subEntries, 0, false);
+            parseControllerRecursive(subCtrlBuf, subInfo, subEntries, 0, false,activeCondition);
 
             String rawName = subInfo.appName;
             if (isPlaceholderOrEmpty(rawName) || "EPOC".equalsIgnoreCase(rawName.trim())) {

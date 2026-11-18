@@ -63,28 +63,119 @@
                     android:layout_height="40dp"
                     android:layout_marginTop="6dp" />
 
-                <Spinner
-                    android:id="@+id/spPlatformTarget"
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:layout_marginTop="6dp" />
-
-                <CheckBox
-                    android:id="@+id/cbFlagShutdownApps"
+				<LinearLayout
+                    android:id="@+id/sectionTargetPrerequisites"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="ShutdownApps (Tutup app aktif saat upgrade)"
-                    android:textColor="#ECEFF1"
-                    android:textSize="12sp" />
+                    android:orientation="vertical">
 
-                <CheckBox
-                    android:id="@+id/cbFlagRomUpgrade"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="ROMUpgrade (Izinkan timpa komponen ROM Z:\)"
-                    android:textColor="#ECEFF1"
-                    android:textSize="12sp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="Target Perangkat Kompatibel (Bisa Multi-Pilih):"
+                        android:textColor="#90CAF9"
+                        android:textSize="11sp" />
+
+					<CheckBox
+						android:id="@+id/cbPlatS60v3"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="S60 3rd Edition (0x101F7961)"
+						android:textColor="#ECEFF1"
+						android:textSize="12sp" />
+
+					<CheckBox
+						android:id="@+id/cbPlatS60v3Fp1"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="S60 3rd FP1 (0x102032BE)"
+						android:textColor="#ECEFF1"
+						android:textSize="12sp" />
+
+					<CheckBox
+						android:id="@+id/cbPlatS60v3Fp2"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="S60 3rd FP2 - E72/N86 (0x102752AE)"
+						android:textColor="#ECEFF1"
+						android:textSize="12sp" />
+
+					<CheckBox
+						android:id="@+id/cbPlatS60v5"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="S60 5th Edition - 5800/N97 (0x1028315F)"
+						android:textColor="#ECEFF1"
+						android:textSize="12sp" />
+
+					<CheckBox
+						android:id="@+id/cbPlatSymbian3"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="Symbian^3 - N8/C7 (0x20022E6D)"
+						android:textColor="#ECEFF1"
+						android:textSize="12sp" />
+
+					<CheckBox
+						android:id="@+id/cbPlatAnnaBelle"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="Symbian Anna / Belle (0x20032DE7)"
+						android:textColor="#ECEFF1"
+						android:textSize="12sp" />
+
+					<!-- Multi-Checkbox Software Dependencies -->
+					<TextView
+						android:layout_width="wrap_content"
+						android:layout_height="wrap_content"
+						android:layout_marginTop="8dp"
+						android:text="Library Pendukung (Software Dependencies):"
+						android:textColor="#90CAF9"
+						android:textSize="11sp" />
+
+					<CheckBox
+						android:id="@+id/cbDepQt"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="Qt Framework (0x2001E61C)"
+						android:textColor="#A5D6A7"
+						android:textSize="12sp" />
+
+					<CheckBox
+						android:id="@+id/cbDepQtMobility"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="QtMobility (0x2002AC89)"
+						android:textColor="#A5D6A7"
+						android:textSize="12sp" />
+
+					<CheckBox
+						android:id="@+id/cbDepOpenC"
+						android:layout_width="match_parent"
+						android:layout_height="34dp"
+						android:text="Open C / PIPS Library (0x20009A80)"
+						android:textColor="#A5D6A7"
+						android:textSize="12sp" />
+
+
+					<CheckBox
+						android:id="@+id/cbFlagShutdownApps"
+						android:layout_width="match_parent"
+						android:layout_height="wrap_content"
+						android:layout_marginTop="6dp"
+						android:text="ShutdownApps (Tutup app aktif saat upgrade)"
+						android:textColor="#ECEFF1"
+						android:textSize="12sp" />
+
+					<CheckBox
+						android:id="@+id/cbFlagRomUpgrade"
+						android:layout_width="match_parent"
+						android:layout_height="wrap_content"
+						android:text="ROMUpgrade (Izinkan timpa komponen ROM Z:\)"
+						android:textColor="#ECEFF1"
+						android:textSize="12sp" />
+				</LinearLayout>
             </LinearLayout>
 
             <!-- SECTION 2: E32 EXECUTABLE PERMISSIONS (AUTO HIDE JIKA V1/V2) -->

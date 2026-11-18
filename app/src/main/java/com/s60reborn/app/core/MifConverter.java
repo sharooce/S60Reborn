@@ -1,5 +1,8 @@
 package com.s60reborn.app.core;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -9,10 +12,12 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.zip.Inflater;
 
 public class MifConverter {
 
-    private static final int MIF_MAGIC = 0x34232342; // "B##4"
+    private static final int MIF_MAGIC = 0x34232342;      // "B##4"
+    private static final int MIF_ICON_MAGIC = 0x34232343; // "C##4"
 
     public static class MifIconEntry {
         public int index;
@@ -30,9 +35,8 @@ public class MifConverter {
             throw new IOException(String.format("Header MIF tidak valid: 0x%08X", magic));
         }
 
-        int version = buf.getInt(4);
         int arrayOffset = buf.getInt(8);
-        int arrayCount = buf.getInt(12); // Jumlah entri (pasangan offset+len)
+        int arrayCount = buf.getInt(12);
 
         List<MifIconEntry> list = new ArrayList<>();
         for (int i = 0; i < arrayCount; i++) {
@@ -79,7 +83,6 @@ public class MifConverter {
                 tableBuf.putInt(0);
                 tableBuf.putInt(0);
             } else {
-                // Bungkus dengan header MifIconHeader (32 byte) jika user memasukkan SVG/SVGB mentah
                 byte[] chunk = wrapWithMifIconHeaderIfNeeded(e.data);
                 tableBuf.putInt(currentDataOffset);
                 tableBuf.putInt(chunk.length);
@@ -90,7 +93,7 @@ public class MifConverter {
 
         ByteBuffer hdr = ByteBuffer.allocate(headerSize).order(ByteOrder.LITTLE_ENDIAN);
         hdr.putInt(MIF_MAGIC);
-        hdr.putInt(2); // Version 2
+        hdr.putInt(2);
         hdr.putInt(headerSize);
         hdr.putInt(entries.size());
 
@@ -104,20 +107,19 @@ public class MifConverter {
     private static byte[] wrapWithMifIconHeaderIfNeeded(byte[] data) throws IOException {
         if (data.length >= 32) {
             ByteBuffer b = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
-            if (b.getInt(0) == 0x34232343) { // Sudah punya header ikon MIF ("C##4")
+            if (b.getInt(0) == MIF_ICON_MAGIC) {
                 return data;
             }
         }
-        // Tambahkan MifIconHeader standar (32 byte) untuk data SVGB/SVG baru
         ByteBuffer iconHdr = ByteBuffer.allocate(32).order(ByteOrder.LITTLE_ENDIAN);
-        iconHdr.putInt(0x34232343); // Icon Magic "C##4"
-        iconHdr.putInt(1);          // Version 1
-        iconHdr.putInt(32);         // DataOffset
-        iconHdr.putInt(data.length);// DataLength
-        iconHdr.putInt(1);          // Type: 1 = SVG/SVGB
-        iconHdr.putInt(0);          // Depth
-        iconHdr.putInt(0);          // Animated
-        iconHdr.putInt(0);          // MaskDepth
+        iconHdr.putInt(MIF_ICON_MAGIC);
+        iconHdr.putInt(1);
+        iconHdr.putInt(32);
+        iconHdr.putInt(data.length);
+        iconHdr.putInt(1); // Type 1 = SVG/SVGB
+        iconHdr.putInt(0);
+        iconHdr.putInt(0);
+        iconHdr.putInt(0);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream(32 + data.length);
         out.write(iconHdr.array());
@@ -125,16 +127,77 @@ public class MifConverter {
         return out.toByteArray();
     }
 
+    /**
+     * Mengekstrak payload murni dari MifIconHeader ("C##4") dan mendekode zlib jika terkompresi
+     */
+    public static byte[] extractRawIconPayload(byte[] chunkData) {
+        if (chunkData == null || chunkData.length == 0) return new byte[0];
+        byte[] payload = chunkData;
+
+        if (chunkData.length >= 16) {
+            ByteBuffer buf = ByteBuffer.wrap(chunkData).order(ByteOrder.LITTLE_ENDIAN);
+            if (buf.getInt(0) == MIF_ICON_MAGIC) {
+                int dataOff = buf.getInt(8);
+                int dataLen = buf.getInt(12);
+                if (dataOff >= 16 && dataOff < chunkData.length) {
+                    int actualLen = (dataLen > 0 && dataOff + dataLen <= chunkData.length)
+                        ? dataLen : (chunkData.length - dataOff);
+                    payload = new byte[actualLen];
+                    System.arraycopy(chunkData, dataOff, payload, 0, actualLen);
+                }
+            }
+        }
+
+        // Cek jika payload terkompresi Zlib (0x78 0x9C / 0x78 0xDA / 0x78 0x01)
+        if (payload.length > 6 && (payload[0] & 0xFF) == 0x78 &&
+            (((payload[1] & 0xFF) == 0x9C) || ((payload[1] & 0xFF) == 0xDA) || ((payload[1] & 0xFF) == 0x01))) {
+            try {
+                Inflater inf = new Inflater();
+                inf.setInput(payload);
+                ByteArrayOutputStream bos = new ByteArrayOutputStream(payload.length * 3);
+                byte[] tmp = new byte[4096];
+                while (!inf.finished()) {
+                    int n = inf.inflate(tmp);
+                    if (n > 0) bos.write(tmp, 0, n);
+                    else if (inf.needsInput() || inf.needsDictionary()) break;
+                }
+                inf.end();
+                if (bos.size() > 0) return bos.toByteArray();
+            } catch (Exception ignored) {}
+        }
+        return payload;
+    }
+
     private static String detectMifEntryType(byte[] data) {
-        if (data.length >= 36) {
-            int magic = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN).getInt(32);
+        byte[] p = extractRawIconPayload(data);
+        if (p.length >= 4) {
+            int magic = ByteBuffer.wrap(p).order(ByteOrder.LITTLE_ENDIAN).getInt(0);
             if (magic == 0x03FA56CC || magic == 0x03FA56CD || magic == 0x03FA56CE) {
                 return "SVGB Vector Icon";
             }
+            if ((p[0] & 0xFF) == 'n' && (p[1] & 0xFF) == 'v' && (p[2] & 0xFF) == 'g') {
+                return "NVG Vector Icon";
+            }
+            if ((p[0] & 0xFF) == 0x89 && (p[1] & 0xFF) == 0x50) {
+                return "PNG Raster Icon";
+            }
         }
-        String head = new String(data, 0, Math.min(data.length, 64));
+        String head = new String(p, 0, Math.min(p.length, 64));
         if (head.contains("<svg")) return "XML SVG Vector";
-        return "Binary Icon (" + data.length + " B)";
+        return "Icon (" + p.length + " B)";
+    }
+
+    public static Bitmap renderMifIconToBitmap(byte[] chunkData, int sizePx) {
+        byte[] payload = extractRawIconPayload(chunkData);
+        if (payload == null || payload.length < 4) return null;
+
+        // 1. Jika PNG / JPG
+        if ((payload[0] & 0xFF) == 0x89 && (payload[1] & 0xFF) == 0x50) {
+            return BitmapFactory.decodeByteArray(payload, 0, payload.length);
+        }
+
+        // 2. Render SVGB / NVG / SVG XML melalui SymbianSvgRenderer
+        return SymbianSvgRenderer.renderBytesToBitmap(payload, sizePx);
     }
 
     private static byte[] readAll(File f) throws IOException {
@@ -146,87 +209,5 @@ public class MifConverter {
             return bos.toByteArray();
         }
     }
-	/**
-     * Merender data ikon SVGB biner Symbian (atau XML SVG) menjadi Bitmap thumbnail Android
-     */
-    public static android.graphics.Bitmap renderMifIconToBitmap(byte[] chunkData, int sizePx) {
-        if (chunkData == null || chunkData.length <= 36) return null;
-
-        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
-			sizePx, sizePx, android.graphics.Bitmap.Config.ARGB_8888);
-        android.graphics.Canvas canvas = new android.graphics.Canvas(bmp);
-        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-
-        ByteBuffer buf = ByteBuffer.wrap(chunkData).order(ByteOrder.LITTLE_ENDIAN);
-        int off = (buf.getInt(0) == 0x34232343) ? 32 : 0;
-        if (chunkData.length <= off + 4) return null;
-
-        int magic = buf.getInt(off);
-		
-		if ((chunkData[0] & 0xFF) == 0x89 && (chunkData[1] & 0xFF) == 0x50) {
-            return android.graphics.BitmapFactory.decodeByteArray(chunkData, 0, chunkData.length);
-        }
-        // Jika file XML SVG yang membungkus PNG Base64
-        String head = new String(chunkData, 0, Math.min(chunkData.length, 256));
-        if (head.contains("base64,")) {
-            String fullXml = new String(chunkData);
-            int b64Idx = fullXml.indexOf("base64,");
-            int endQuote = fullXml.indexOf('"', b64Idx);
-            if (endQuote > b64Idx + 7) {
-                byte[] imgBytes = android.util.Base64.decode(fullXml.substring(b64Idx + 7, endQuote), android.util.Base64.DEFAULT);
-                return android.graphics.BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.length);
-            }
-        }
-
-        if (magic == 0x03FA56CC || magic == 0x03FA56CD || magic == 0x03FA56CE) {
-            // Ekstrak palet warna dominan & koordinat path dari stream biner SVGB Symbian
-            java.util.List<Integer> colors = new java.util.ArrayList<>();
-            for (int pos = off + 8; pos <= chunkData.length - 4; pos++) {
-                int b = chunkData[pos] & 0xFF;
-                int g = chunkData[pos + 1] & 0xFF;
-                int r = chunkData[pos + 2] & 0xFF;
-                int a = chunkData[pos + 3] & 0xFF;
-                if (a == 0xFF && !(r == 0 && g == 0 && b == 0) && !(r == 255 && g == 255 && b == 255)) {
-                    int col = android.graphics.Color.rgb(r, g, b);
-                    if (!colors.contains(col) && colors.size() < 6) {
-                        colors.add(col);
-                    }
-                }
-            }
-
-            int primaryCol = !colors.isEmpty() ? colors.get(0) : 0xFF4FC3F7;
-            int secondaryCol = colors.size() > 1 ? colors.get(1) : 0xFFFFFFFF;
-
-            // Gambar pratinjau vektor multi-layer berdasarkan geometri stream SVGB
-            float pad = sizePx * 0.14f;
-            android.graphics.RectF box = new android.graphics.RectF(pad, pad, sizePx - pad, sizePx - pad);
-            p.setColor(primaryCol);
-            canvas.drawRoundRect(box, sizePx * 0.22f, sizePx * 0.22f, p);
-
-            // Rekonstruksi kurva path dari data koordinat biner SVGB
-            android.graphics.Path path = new android.graphics.Path();
-            boolean started = false;
-            int step = Math.max(4, (chunkData.length - off) / 24);
-            for (int pos = off + 16; pos <= chunkData.length - 4; pos += step) {
-                float nx = ((chunkData[pos] & 0xFF) / 255f) * (sizePx * 0.56f) + (sizePx * 0.22f);
-                float ny = ((chunkData[pos + 1] & 0xFF) / 255f) * (sizePx * 0.56f) + (sizePx * 0.22f);
-                if (!started) {
-                    path.moveTo(nx, ny);
-                    started = true;
-                } else {
-                    path.lineTo(nx, ny);
-                }
-            }
-            path.close();
-
-            p.setColor(secondaryCol);
-            p.setStyle(android.graphics.Paint.Style.FILL_AND_STROKE);
-            p.setStrokeWidth(2.5f);
-            canvas.drawPath(path, p);
-            return bmp;
-        }
-        return null;
-    }
-	
 }
 

@@ -17,7 +17,7 @@ public final class SisField {
     public static final int SISX_UID1_MAGIC       = 0x10201A7A;
     public static final int LEGACY_SIS_UID2_MAGIC = 0x10000419;
 
-    public static final int FIELD_STRING                    = 1;
+	public static final int FIELD_STRING                    = 1;
     public static final int FIELD_ARRAY                     = 2;
     public static final int FIELD_COMPRESSED                = 3;
     public static final int FIELD_VERSION                   = 4;
@@ -26,17 +26,20 @@ public final class SisField {
     public static final int FIELD_TIME                      = 7;
     public static final int FIELD_DATE_TIME                 = 8;
     public static final int FIELD_UID                       = 9;
-    public static final int FIELD_DEPENDENCY                = 10;
-    public static final int FIELD_SUPPORTED_LANGUAGE        = 11;
+    public static final int FIELD_UNUSED                    = 10;
+    public static final int FIELD_LANGUAGE                  = 11;
     public static final int FIELD_CONTENTS                  = 12;
     public static final int FIELD_CONTROLLER                = 13;
     public static final int FIELD_INFO                      = 14;
     public static final int FIELD_SUPPORTED_LANGUAGES       = 15;
     public static final int FIELD_SUPPORTED_OPTIONS         = 16;
     public static final int FIELD_PREREQUISITES             = 17;
-    public static final int FIELD_PROPERTY                  = 18;
+    public static final int FIELD_DEPENDENCY                = 18;
     public static final int FIELD_PROPERTIES                = 19;
-    public static final int FIELD_SUPPORTED_OPTION          = 20;
+    public static final int FIELD_PROPERTY                  = 20;
+    public static final int FIELD_SIGNATURES                = 21;
+    public static final int FIELD_CERTIFICATE_CHAIN         = 22;
+    public static final int FIELD_LOGO                      = 23;
     public static final int FIELD_FILE_DESCRIPTION          = 24;
     public static final int FIELD_HASH                      = 25;
     public static final int FIELD_IF                        = 26;
@@ -46,7 +49,7 @@ public final class SisField {
     public static final int FIELD_DATA                      = 30;
     public static final int FIELD_DATA_UNIT                 = 31;
     public static final int FIELD_FILE_DATA                 = 32;
-    public static final int FIELD_LOGO                      = 33;
+    public static final int FIELD_SUPPORTED_OPTION          = 33;
     public static final int FIELD_CONTROLLER_CHECKSUM       = 34;
     public static final int FIELD_DATA_CHECKSUM             = 35;
     public static final int FIELD_SIGNATURE                 = 36;
@@ -55,8 +58,9 @@ public final class SisField {
     public static final int FIELD_SIGNATURE_CERT_CHAIN      = 39;
     public static final int FIELD_DATA_INDEX                = 40;
     public static final int FIELD_CAPABILITIES              = 41;
-    public static final int FIELD_CERTIFICATE_CHAIN         = 42;
-    public static final int FIELD_SIGNATURES                = 43;
+	public static final int FIELD_CAPABILITIES_LIST 		= 42;
+	public static final int FIELD_SIGNATURE_LIST 			= 43;
+	
 
     public static byte[] wrapTlv(int type, byte[] data) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream(8 + align4(data.length));

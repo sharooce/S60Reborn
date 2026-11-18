@@ -24,6 +24,9 @@
 		<activity
 			android:name="com.s60reborn.app.ui.ThemeAssetEditorActivity"
 			android:theme="@android:style/Theme.NoTitleBar" />
+		<activity android:name="com.s60reborn.app.ui.SisxExplorerActivity"
+			android:theme="@android:style/Theme.NoTitleBar" />
+		
 		
     </application>
 
