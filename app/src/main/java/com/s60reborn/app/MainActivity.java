@@ -1046,7 +1046,12 @@ public class MainActivity extends Activity {
 						int savedSignMode = config.signMode;
 						config.signMode = effectiveSignMode;
 						try {
-							SisxPacker.packFromPkgWithConfig(pkgFile, activeProjectDir, outSis, config);
+							if(isLegacyV2){
+								
+								SisLegacyPacker.pack(activeProjectDir,currentPkgInfo,config,outSis);
+							}else{
+								SisxPacker.packFromPkgWithConfig(pkgFile, activeProjectDir, outSis, config);
+							}
 						} finally {
 							config.signMode = savedSignMode;
 						}

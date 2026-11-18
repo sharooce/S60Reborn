@@ -13,6 +13,7 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import com.s60reborn.app.core.*;
 
 public class SisProjectConfig {
     // 0 = SISX Modern (Symbian OS 9.x / S60v3 / S60v5 / Belle - Requires Signing)
@@ -225,26 +226,33 @@ public class SisProjectConfig {
         return cfg;
     }
 
-    public static void syncConfigFromUnpackedInfo(SisPackageInfo info, SisProjectConfig config) {
+	public static void syncConfigFromUnpackedInfo(SisPackageInfo info, SisProjectConfig config) {
         if (info == null || config == null) return;
-        config.packageFormat = (info.uid2 == SisField.LEGACY_SIS_UID2_MAGIC) ? 1 : 0;
+
+        boolean isLegacy = (info.uid2 == SisField.LEGACY_SIS_UID2_MAGIC)
+            || (info.uid1 == LegacySisField.UID1_EPOC_V2)
+            || (info.uid1 == LegacySisField.UID1_EPOC_V1);
+
+        config.packageFormat = isLegacy ? 1 : 0;
         config.installType = info.installType;
         config.flagShutdownApps = (info.installFlags & 0x01) != 0;
         config.flagNonRemovable = (info.installFlags & 0x02) != 0;
         config.flagRomUpgrade   = (info.installFlags & 0x04) != 0;
-        config.signMode = info.isSigned ? 2 : 0;
+        config.signMode = isLegacy ? 0 : (info.isSigned ? 2 : 0);
 
         config.targetDevices.clear();
-        if (info.targetDevices != null) {
+        if (info.targetDevices != null && !info.targetDevices.isEmpty()) {
             config.targetDevices.addAll(info.targetDevices);
-            if (!info.targetDevices.isEmpty()) {
-                config.targetPlatformUid = info.targetDevices.get(0).uid;
-            }
+            config.targetPlatformUid = info.targetDevices.get(0).uid;
+        } else if (isLegacy) {
+            config.targetPlatformUid = 0x101F7960; // Default S60 2nd Edition
         }
+
         config.dependencies.clear();
         if (info.dependencies != null) {
             config.dependencies.addAll(info.dependencies);
         }
     }
+	
 }
 

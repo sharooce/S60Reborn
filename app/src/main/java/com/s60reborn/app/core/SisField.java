@@ -13,6 +13,10 @@ import java.util.zip.Deflater;
 public final class SisField {
 
     private SisField() {}
+	
+	public static final int LEGACY_SIS_UID1_V1 = 0x10003A12; // Symbian OS 6.0 (S60v1)
+	public static final int LEGACY_SIS_UID1_V2 = 0x10201ED3; // Symbian OS 7.0s / 8.x (S60v2 / N-Gage)
+	
 
     public static final int SISX_UID1_MAGIC       = 0x10201A7A;
     public static final int LEGACY_SIS_UID2_MAGIC = 0x10000419;
